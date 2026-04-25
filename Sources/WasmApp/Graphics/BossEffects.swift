@@ -289,11 +289,12 @@ enum BossEffects {
     /// All overlays are children of the lance, so they freeze automatically
     /// when the lance embeds and self-remove with the lance.
     static func attachLanceOverlays(to lance: Projectile) {
-        // The Swift lance rotates with `zRotation = atan2(bdx, -bdy)` where
-        // bdx/bdy = impact - boss, which makes Swift lance-local +Y point
-        // TOWARD BOSS in world (the TAIL side). Godot's `look_at(boss) + 90°`
-        // makes its lance-local -Y point toward boss in its Y-down frame.
-        // → Godot Y values flip sign when ported to Swift.
+        // The Swift lance rotates with `zRotation = atan2(-bdx, -bdy)` where
+        // bdx/bdy = impact - boss. With OpenCoreAnimation's CW-positive
+        // rotation in Y-up, this aligns Swift lance-local +Y with the toward-
+        // boss direction in world (the TAIL side). Godot's `look_at(boss) +
+        // 90°` makes its lance-local -Y point toward boss in its Y-down frame.
+        // → Godot Y values flip sign when ported to Swift (Godot -Y == Swift +Y).
         //
         // Trails: Godot Y = -64 / -126 / -186 / -252 (toward-boss in Godot)
         // → Swift Y = +64 / +126 / +186 / +252 (toward-boss in Swift).
