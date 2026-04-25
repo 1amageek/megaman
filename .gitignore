@@ -1,0 +1,23 @@
+# Swift / SwiftPM build artifacts
+.build/
+.build-*/
+.swiftpm/
+Packages/
+*.xcodeproj
+*.xcworkspace
+xcuserdata/
+*.playground
+
+# macOS
+.DS_Store
+
+# Editor / IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Playwright (tests/e2e)
+node_modules/
+playwright-report/
+test-results/
