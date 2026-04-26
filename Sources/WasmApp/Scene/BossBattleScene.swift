@@ -48,6 +48,14 @@ final class BossBattleScene: SKScene {
     private var screenShakeTimer: TimeInterval = 0
     private var screenShakeAmplitude: CGFloat = 0
 
+    // Snapshot of children that buildScene() installs and that survive every
+    // reset (Player, Boss, HUD, walls, backdrop, FPS label). cleanupTransient-
+    // Children() removes everything else — without this, effect sprites that
+    // self-remove via SKAction.removeFromParent leak when the underlying
+    // SKActionRunner drops the action (known OpenSpriteKit bug), letting the
+    // intro→fight→defeat→intro loop accumulate hundreds of orphaned children.
+    private var permanentChildIDs: Set<ObjectIdentifier> = []
+
     // Victory cadence — Godot BossDeath drives a 6-stage tempo over an
     // ~13 s window (1 s freeze + 10 s explosions + 3.12 s fade). The port
     // collapses the tempo into wall-clock thresholds against `phaseTimer`,
@@ -182,6 +190,23 @@ final class BossBattleScene: SKScene {
         label.zPosition = 200
         addChild(label)
         fpsLabel = label
+
+        permanentChildIDs = Set(children.map { ObjectIdentifier($0) })
+    }
+
+    /// Removes every scene child that was added after buildScene() — death
+    /// explosions, dust puffs, ghost trails, victory bursts, debug markers,
+    /// fade overlays, etc. Effects normally self-remove via SKAction, but
+    /// the OpenSpriteKit action runner periodically drops `.removeFromParent`
+    /// on grouped actions, so we sweep on every reset to bound the leak.
+    private func cleanupTransientChildren() {
+        let toRemove = children.filter { !permanentChildIDs.contains(ObjectIdentifier($0)) }
+        for node in toRemove {
+            node.removeAllActions()
+            node.removeFromParent()
+        }
+        debugMarkers.removeAll()
+        fadeOverlay = nil
     }
 
     // MARK: - Tick
@@ -308,9 +333,11 @@ final class BossBattleScene: SKScene {
         guard let memory = JSObject.global.performance.memory.object else {
             return ""
         }
-        let used = Int(memory.usedJSHeapSize.number ?? 0)
-        let total = Int(memory.totalJSHeapSize.number ?? 0)
-        let limit = Int(memory.jsHeapSizeLimit.number ?? 0)
+        // Int is 32-bit on wasm32, but jsHeapSizeLimit on Chrome is ~4 GiB,
+        // which exceeds Int32.max and traps `Int(_:)`. Use Int64 throughout.
+        let used = Int64(memory.usedJSHeapSize.number ?? 0)
+        let total = Int64(memory.totalJSHeapSize.number ?? 0)
+        let limit = Int64(memory.jsHeapSizeLimit.number ?? 0)
         return " jsHeapUsed=\(used) jsHeapTotal=\(total) jsHeapLimit=\(limit)"
         #else
         return ""
@@ -415,16 +442,20 @@ final class BossBattleScene: SKScene {
                     if projectile.kind == .lemon { projectile.isAlive = false }
                 }
             case .boss:
-                if player.isAlive, projectile.hitbox.intersects(player.hitbox) {
+                let tipActive: Bool = {
+                    if projectile.kind == .sigmaLance { return projectile.tipDamageActive }
+                    return true
+                }()
+                if player.isAlive, tipActive, projectile.hitbox.intersects(player.hitbox) {
                     _ = player.takeDamage(projectile.damage, inflicterX: projectile.position.x)
                     switch projectile.kind {
                     case .sigmaLaser:
                         break  // beam persists for the full firing window
                     case .sigmaLance:
                         // Lance is born embedded at the wall; small DamageOnTouch
-                        // tip is active until state 1→2 (~2 s). Player iframes
-                        // (~1.15 s) keep the per-frame overlap check from
-                        // re-damaging through the full window.
+                        // tip is active until state 1→2 (~2 s) — gated by
+                        // `tipDamageActive` on the projectile. Player iframes
+                        // (~1.15 s) prevent re-damage during the active window.
                         break
                     default:
                         projectile.isAlive = false
@@ -694,6 +725,7 @@ final class BossBattleScene: SKScene {
     /// discard every projectile, and re-enter the intro phase. The `BossAI`
     /// is recreated so its seed-driven attack order restarts from scratch.
     private func resetBattle() {
+        cleanupTransientChildren()
         player.respawn(at: stage.playerSpawn)
         boss.interruptAttack()
         boss.heal(boss.maxHealth)
@@ -706,7 +738,6 @@ final class BossBattleScene: SKScene {
         projectiles.removeAll()
         for wall in sigmaWalls { wall.reset() }
         bossAI = BossAI(context: SceneAttackContext(scene: self))
-        fadeOverlay?.alpha = 0
         hideGameOverLabel()
         phaseTimer = 0
         // Reset the intro state — re-enter the 9-stage scripted cutscene so a
@@ -847,6 +878,18 @@ final class BossBattleScene: SKScene {
     func debugResetBattle() {
         resetBattle()
     }
+
+    // Debug-only: rewire the player's max HP and the matching HUD ceiling.
+    // The Godot reference grows player max via Heart Tanks (8 × +2 → 32 by Sigma);
+    // this port skips the stage path so we expose the override here for the bottom-bar UI.
+    func setPlayerMaxHealth(_ value: CGFloat) {
+        let v = max(1, value)
+        player.setMaxHealth(v)
+        playerHealthBar.setMaxValue(v, current: player.currentHealth)
+    }
+
+    func playerMaxHealth() -> CGFloat { player.maxHealth }
+    func playerCurrentHealth() -> CGFloat { player.currentHealth }
 
     // MARK: - Debug projectile snapshot
 

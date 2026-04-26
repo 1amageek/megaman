@@ -20,7 +20,7 @@ final class HealthBar: SKNode {
     }
 
     private let kind: Kind
-    private let maxValue: CGFloat
+    private var maxValue: CGFloat
     private let background: SKSpriteNode
     private let fill: SKSpriteNode
     private let border: SKSpriteNode
@@ -69,6 +69,16 @@ final class HealthBar: SKNode {
         // would be clobbered by the per-frame `update(current: boss.currentHealth)`.
         if fillAnim != nil { return }
         applyRatio(current / maxValue)
+    }
+
+    /// Debug-mode max-HP override. Updates the cached ceiling and re-applies
+    /// the bar ratio against the supplied live value so the visual matches
+    /// the new max immediately. No-op while a fill animation is running.
+    func setMaxValue(_ value: CGFloat, current: CGFloat) {
+        maxValue = max(1, value)
+        if fillAnim == nil {
+            applyRatio(current / maxValue)
+        }
     }
 
     /// Kick off a scripted fill animation from 0 → `target` over `duration`

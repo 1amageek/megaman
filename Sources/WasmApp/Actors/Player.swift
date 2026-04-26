@@ -32,6 +32,10 @@ final class Player: Actor {
     // facing mid-stagger does NOT rotate the recoil. Keep the sign sticky for
     // the duration of the hurt state.
     private var hurtKnockbackSign: CGFloat = 1
+    // Godot Damage.gd `death_protection := 1` — the "Last Chance" survival
+    // counter. Each fatal hit while above 3 HP consumes one charge instead
+    // of killing; reset to 1 on respawn so every fresh life gets the save.
+    private var deathProtection: Int = 1
     private var wallContact: Facing?
     private(set) var chargeLevel: Int = 0  // 0=none, 1=mid, 2=full
     private var chargeTimer: TimeInterval = 0
@@ -717,6 +721,12 @@ final class Player: Actor {
         deathTimer = 0
         deathSequenceBegun = false
         deathSecondBurstFired = false
+        // Godot PlayerDeath._Setup line 31: `character.remove_invulnerability_shader()`.
+        // Stops the alpha blink so the dying sprite does not look "still
+        // invincible" during the 0.5 s death-pause before the explosion.
+        // The i-frame timer keeps running underneath — only the visual is
+        // detached. respawn() restores the shader for the next life.
+        removeInvulnerabilityShader()
     }
 
     /// Advances the staged Godot PlayerDeath sequence. Called once per tick
@@ -766,6 +776,11 @@ final class Player: Actor {
         deathTimer = 0
         deathSequenceBegun = false
         deathSecondBurstFired = false
+        // Restore the per-life Godot Damage.gd export defaults: re-enable
+        // the visible blink for the new life and refill the Last Chance
+        // protection so the next fatal hit can be saved again.
+        applyInvulnerabilityShader()
+        deathProtection = 1
         hurtTimer = 0
         dashTimer = 0
         airDashTimer = 0
@@ -818,7 +833,22 @@ final class Player: Actor {
     // MARK: - Damage
 
     override func takeDamage(_ amount: CGFloat, inflicterX: CGFloat? = nil) -> Bool {
-        let applied = super.takeDamage(amount, inflicterX: inflicterX)
+        // Godot Damage.gd `should_last_chance(actual_damage)`:
+        //   character.current_health > 3 and death_protection > 0
+        //   and character.current_health - actual_damage <= 0
+        // → activate_last_chance(): clamp HP to 1, consume the protection.
+        // Without this, sigmaLaserDamage (28) > playerMaxHealth (16) one-shots
+        // even from full HP, which the user perceives as "died during
+        // invincibility" — the lethal first hit lands before any iframe
+        // window has a chance to feel relevant.
+        var actualAmount = amount
+        if !isInvulnerable, isAlive,
+           currentHealth > 3, deathProtection > 0,
+           currentHealth - amount <= 0 {
+            actualAmount = currentHealth - 1
+            deathProtection = 0
+        }
+        let applied = super.takeDamage(actualAmount, inflicterX: inflicterX)
         if applied {
             // Godot Damage.gd _Setup: set_vertical_speed(-jump_velocity) and
             // set_horizontal_velocity(define_knockback_direction(inflicter) *

@@ -217,6 +217,10 @@ func loadSpriteAtlases() async {
     await loadGridAtlas(name: "sigma_trail",       cols: 1, rows: 9, frameDurationMs: 33,  kind: .sigmaTrail)
     await loadGridAtlas(name: "sigma_particles",   cols: 1, rows: 1,                       kind: .sigmaParticle)
     await loadGridAtlas(name: "sigma_particles2",  cols: 3, rows: 3, frameDurationMs: 56,  kind: .sigmaParticleAnim)
+    // SigmaWall.tscn destruction overlays — explosions (4×4 anim, lifetime 2s
+    // → 125ms/frame), remains_gray (6×3 anim, lifetime 1.25s ÷ 18 ≈ 70ms).
+    await loadGridAtlas(name: "green_explosion",   cols: 4, rows: 4, frameDurationMs: 125, kind: .greenExplosion)
+    await loadGridAtlas(name: "remains_gray",      cols: 6, rows: 3, frameDurationMs: 70,  kind: .remainsGray)
 }
 
 @MainActor
@@ -828,6 +832,30 @@ func installTestHarness() {
         return .undefined
     }
 
+    // Debug-only — overrides the player's max HP and the matching HUD ceiling.
+    // Bottom-bar slider in index.html drives this. Godot's Heart Tank progression
+    // (8 hearts × +2 = 32 by Sigma) doesn't exist in this isolated port, so the
+    // user reshapes the ceiling here instead.
+    let setPlayerMaxHealth = JSClosure { args -> JSValue in
+        MainActor.assumeIsolated {
+            guard let scene = battleScene, let v = args.first?.number else { return }
+            scene.setPlayerMaxHealth(CGFloat(v))
+        }
+        return .undefined
+    }
+
+    let getPlayerHealth = JSClosure { _ -> JSValue in
+        let snapshot: (current: Double, max: Double)? = MainActor.assumeIsolated {
+            guard let scene = battleScene else { return nil }
+            return (Double(scene.playerCurrentHealth()), Double(scene.playerMaxHealth()))
+        }
+        guard let s = snapshot else { return .null }
+        let obj = JSObject.global.Object.function!.new()
+        obj.current = .number(s.current)
+        obj.max = .number(s.max)
+        return .object(obj)
+    }
+
     // Computed cannon mouth in world coords — used to verify the laser anchor
     // sits on the rendered cannon arm. Returns null if no scene yet.
     let getBossMuzzle = JSClosure { _ -> JSValue in
@@ -961,6 +989,8 @@ func installTestHarness() {
     harness.setBossFacing = .object(setBossFacing)
     harness.setBossHealth = .object(setBossHealth)
     harness.setPlayerHealth = .object(setPlayerHealth)
+    harness.setPlayerMaxHealth = .object(setPlayerMaxHealth)
+    harness.getPlayerHealth = .object(getPlayerHealth)
     harness.getBossMuzzle = .object(getBossMuzzle)
     harness.getProjectiles = .object(getProjectiles)
     harness.marker = .object(marker)
@@ -979,6 +1009,7 @@ func installTestHarness() {
         setPlayerPosition, damageBoss, getFrameCount, getAIState, getPerfStats,
         disableBoss, forceAttack, killPlayer, getSceneChildren, step, resumeRAF,
         setBossPosition, setBossFacing, setBossHealth, setPlayerHealth,
+        setPlayerMaxHealth, getPlayerHealth,
         getBossMuzzle, getProjectiles, marker, clearMarkers, resetBattle,
         getActiveAttackInfo, pressKey, releaseKeys, forcePlayerAction
     ]
@@ -1002,19 +1033,24 @@ nonisolated(unsafe) var testHarnessClosures: [JSClosure] = []
 func startAnimationLoop() {
     animationCallback = JSClosure { _ -> JSValue in
         MainActor.assumeIsolated {
-            guard let skRenderer = renderer else { return }
             // `stepMode` gives the test harness exclusive control of update() —
             // we stop re-scheduling rAF so there's no risk of it interleaving
             // with `step()` calls (which use a separate virtual clock).
             if stepMode { return }
+            // Re-arm the next frame BEFORE running update/render. WASM traps
+            // (`unreachable`) do not unwind through `defer`, so any trap inside
+            // update would skip a tail re-arm and freeze the loop. Scheduling
+            // first means a single bad frame loses one tick rather than the
+            // entire animation.
+            if let callback = animationCallback {
+                _ = JSObject.global.requestAnimationFrame!(callback)
+            }
+            guard let skRenderer = renderer else { return }
             let now = JSObject.global.performance.now().number ?? 0
             let currentTime = (now - startTime) / 1000.0
             skRenderer.update(atTime: currentTime)
             skRenderer.render()
             frameCount &+= 1
-            if let callback = animationCallback {
-                _ = JSObject.global.requestAnimationFrame!(callback)
-            }
         }
         return .undefined
     }
@@ -1055,13 +1091,24 @@ func applyPixelArtCanvasCSS(canvas: JSObject) {
 
 @MainActor
 func sizeCanvasToViewport(canvas: JSObject) {
-    // Aspect-fit the native canvas to the viewport. Fractional scaling is fine —
-    // `image-rendering: pixelated` keeps pixel edges crisp at non-integer multiples.
-    let window = JSObject.global
-    let innerW = window.innerWidth.number ?? 0
-    let innerH = window.innerHeight.number ?? 0
-    let scaleX = innerW / Double(GameConfig.gameWidth)
-    let scaleY = innerH / Double(GameConfig.gameHeight)
+    // Aspect-fit the native canvas to the #stage container (which excludes the
+    // debug panel strip). Fractional scaling is fine — `image-rendering:
+    // pixelated` keeps pixel edges crisp at non-integer multiples.
+    let document = JSObject.global.document
+    let stage = document.getElementById("stage")
+    let containerW: Double
+    let containerH: Double
+    if let rect = stage.getBoundingClientRect().object,
+       let w = rect.width.number, let h = rect.height.number, w > 0, h > 0 {
+        containerW = w
+        containerH = h
+    } else {
+        let window = JSObject.global
+        containerW = window.innerWidth.number ?? 0
+        containerH = window.innerHeight.number ?? 0
+    }
+    let scaleX = containerW / Double(GameConfig.gameWidth)
+    let scaleY = containerH / Double(GameConfig.gameHeight)
     let scale = max(1, min(scaleX, scaleY))
     let cssW = Double(GameConfig.gameWidth) * scale
     let cssH = Double(GameConfig.gameHeight) * scale

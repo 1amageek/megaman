@@ -21,6 +21,8 @@ enum EffectAtlases {
         case sigmaTrail        // sigma_trail.png       1x9 (Lance.tscn trail/trail2/trail3/trail4)
         case sigmaParticle     // sigma_particles.png   1x1 (Lance.tscn evilfire_particles drifting sparks)
         case sigmaParticleAnim // sigma_particles2.png  3x3 (Lance.tscn firetip animated flame)
+        case greenExplosion    // green_explosion.png   4x4 (SigmaWall.tscn explosions GPUParticles2D)
+        case remainsGray       // remains_gray.png      6x3 (SigmaWall.tscn explosion_remains GPUParticles2D)
     }
 
     private static var atlases: [Kind: SpriteAtlas] = [:]

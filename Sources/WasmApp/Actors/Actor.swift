@@ -36,6 +36,12 @@ class Actor: SKSpriteNode {
     // Damage handling
     private var invulnerabilityTimer: TimeInterval = 0
     private var flashTimer: TimeInterval = 0
+    // Godot Actor.gd separates the invulnerability TIMER (damage immunity
+    // window) from the invulnerability SHADER (the visible blink). The
+    // shader is removed by `PlayerDeath._Setup` so a dying actor does not
+    // appear to blink during the 0.5 s death-pause before the explosion.
+    // Mirror that here with a flag the death/respawn paths toggle.
+    private var invulnerabilityShaderActive: Bool = true
     var damageInvulnerabilityDuration: TimeInterval { PhysicsConstants.invulnerabilityDuration }
     var isInvulnerable: Bool { invulnerabilityTimer > 0 }
     var isAlive: Bool { currentHealth > 0 }
@@ -67,6 +73,31 @@ class Actor: SKSpriteNode {
 
     func heal(_ amount: CGFloat) {
         currentHealth = min(maxHealth, currentHealth + amount)
+    }
+
+    /// Debug-mode max-HP override. Clamps `currentHealth` so the new ceiling
+    /// is respected. The HUD's HealthBar caches its own `maxValue`, so the
+    /// scene must call `HealthBar.setMaxValue(_:current:)` after this to
+    /// keep the bar's ratio in sync.
+    func setMaxHealth(_ value: CGFloat) {
+        let newMax = max(1, value)
+        maxHealth = newMax
+        currentHealth = min(currentHealth, newMax)
+    }
+
+    /// Mirrors Godot `character.remove_invulnerability_shader()`. Stops the
+    /// alpha blink in `advance(_:)` while the i-frame timer keeps running.
+    /// Called at death so the dying sprite is fully visible (or fully
+    /// hidden by the death sequence) rather than flashing.
+    func removeInvulnerabilityShader() {
+        invulnerabilityShaderActive = false
+    }
+
+    /// Mirrors Godot `character.apply_invulnerability_shader()`. Restores
+    /// the alpha blink — used on respawn so a fresh life behaves normally
+    /// after a death that disabled the shader.
+    func applyInvulnerabilityShader() {
+        invulnerabilityShaderActive = true
     }
 
     /// Debug-only — set HP directly, bypassing damage rules and i-frames. Used
@@ -139,7 +170,7 @@ class Actor: SKSpriteNode {
         if flashTimer > 0 {
             flashTimer = max(0, flashTimer - dt)
             alpha = 0.6
-        } else if isInvulnerable {
+        } else if isInvulnerable, invulnerabilityShaderActive {
             let blink = Int(invulnerabilityTimer * 20) % 2 == 0
             alpha = blink ? 0.4 : 1.0
         } else {

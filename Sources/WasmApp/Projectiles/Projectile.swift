@@ -57,6 +57,13 @@ final class Projectile: SKSpriteNode {
     var longDamageWidth: CGFloat = 0          // Godot DamageOnTouch2 size.x = 3 → 6 px total width
     var longDamageActive: Bool = false
 
+    // Small tip hitbox — Godot Lance.tscn `DamageOnTouch` is active during
+    // states 0+1 and deactivated at state 1→2 (timer > 2.0s). Without this
+    // gate the embedded lance damages the player for the full 3.0s lifetime
+    // instead of the Godot 2.0s window, giving an extra ~1s of vulnerability
+    // post-loop where the spear is visually "fading out" but still hot.
+    var tipDamageActive: Bool = true
+
     // Per-kind state machine for born-embedded projectiles. The lance lives 3s
     // total in Godot (state 0 ~0.3s + state 1 2s + state 2 1s) and triggers
     // particle/hitbox shutdowns at the boundaries; tracked here so the embed
@@ -114,6 +121,7 @@ final class Projectile: SKSpriteNode {
             // damage.deactivate() halts the small tip damage too.
             if !didStopLanceParticles && lanceStateTimer >= 2.0 {
                 didStopLanceParticles = true
+                tipDamageActive = false
                 onLanceParticleStop?()
             }
             // State 2 → free at 3.0s.

@@ -447,4 +447,164 @@ enum BossEffects {
         container.run(SKAction.sequence([.wait(forDuration: 0.6), .removeFromParent()]))
         return container
     }
+
+    /// One smoke puff drifting upward from the wall's base. Mirrors Godot
+    /// SigmaWall.tscn `smoke` GPUParticles2D (smoke.png, amount 11, lifetime
+    /// 0.75s, direction (0,-1,0) → Swift +Y, gravity 0). Spawn this once per
+    /// `smokeInterval` while the wall is rising.
+    static func sigmaWallRiseSmoke(at point: CGPoint) -> SKNode {
+        let p = SKSpriteNode(color: SKColor(red: 0.7, green: 0.7, blue: 0.7, alpha: 1.0),
+                             size: CGSize(width: 12, height: 12))
+        if let tex = EffectAtlases.animation(.smoke)?.textures.first {
+            p.texture = tex
+            p.colorBlendFactor = 0
+        }
+        p.position = CGPoint(x: point.x + CGFloat.random(in: -4...4),
+                             y: point.y + 4)
+        p.alpha = 0.85
+        p.zPosition = 36
+        p.blendMode = .alpha
+        let drift = SKAction.moveBy(x: CGFloat.random(in: -3...3),
+                                    y: CGFloat.random(in: 14...22),
+                                    duration: 0.75)
+        let fade = SKAction.fadeOut(withDuration: 0.75)
+        let grow = SKAction.scale(to: 1.4, duration: 0.75)
+        p.run(SKAction.sequence([SKAction.group([drift, fade, grow]), .removeFromParent()]))
+        return p
+    }
+
+    /// Sustained green-tinted explosion particles around the wall. Mirrors
+    /// Godot SigmaWall.tscn `explosions` GPUParticles2D (green_explosion.png
+    /// 4×4 anim atlas, amount 32, lifetime 2.0s, anim_speed_curve 3→0, sphere
+    /// emission radius 1, no direction/gravity). Self-removes after `duration`
+    /// seconds — call from `on_desperation` and pass `cleanupDelay` (2.0s).
+    static func sigmaWallExplosionPulse(at point: CGPoint, duration: TimeInterval) -> SKNode {
+        let container = SKNode()
+        container.position = point
+        container.zPosition = 80
+        guard let anim = EffectAtlases.animation(.greenExplosion) else {
+            container.run(SKAction.sequence([.wait(forDuration: duration), .removeFromParent()]))
+            return container
+        }
+        let stopKey = "sigmaWallExplosionPulse"
+        let spawn = SKAction.run { [weak container] in
+            guard let container else { return }
+            let p = SKSpriteNode(texture: anim.textures.first,
+                                 size: CGSize(width: 36, height: 36))
+            p.blendMode = .add
+            p.alpha = 1.0
+            // Sphere emission radius 1.0 → tight cluster around the centre,
+            // randomised to feel like a 32-emitter cloud rather than a column.
+            p.position = CGPoint(x: CGFloat.random(in: -32...32),
+                                 y: CGFloat.random(in: -84...84))
+            // anim_speed_curve 3→0 across lifetime 2s: animate fast then stop;
+            // approximate with a single play of the 16 frames over ~0.7s.
+            let animate = SKAction.animate(with: anim.textures, timePerFrame: 0.045)
+            let fade = SKAction.fadeOut(withDuration: 0.85)
+            p.run(SKAction.sequence([SKAction.group([animate, fade]), .removeFromParent()]))
+            container.addChild(p)
+        }
+        // amount 32 over lifetime 2.0s → 16/sec spawn rate.
+        let interval: TimeInterval = 0.06
+        container.run(SKAction.repeatForever(SKAction.sequence([spawn, .wait(forDuration: interval)])),
+                      withKey: stopKey)
+        container.run(SKAction.sequence([
+            .wait(forDuration: duration),
+            SKAction.run { [weak container] in container?.removeAction(forKey: stopKey) },
+            // Linger so already-spawned children can finish their animate-fade.
+            .wait(forDuration: 0.9),
+            .removeFromParent(),
+        ]))
+        return container
+    }
+
+    /// Sustained gray smoke at the wall mid-height — Godot SigmaWall.tscn
+    /// `end_smoke` GPUParticles2D (smoke.png, amount 24, lifetime 0.75s,
+    /// direction (0,-1,0) → Swift +Y, gravity 0). Active simultaneously with
+    /// `explosions` from `on_desperation` until end_explosion_vfx (2.0s).
+    static func sigmaWallEndSmoke(at point: CGPoint, duration: TimeInterval) -> SKNode {
+        let container = SKNode()
+        container.position = point
+        container.zPosition = 81
+        let stopKey = "sigmaWallEndSmoke"
+        let smokeTex = EffectAtlases.animation(.smoke)?.textures.first
+        let spawn = SKAction.run { [weak container] in
+            guard let container else { return }
+            let p = SKSpriteNode(color: SKColor(red: 0.65, green: 0.65, blue: 0.7, alpha: 1.0),
+                                 size: CGSize(width: 14, height: 14))
+            if let smokeTex {
+                p.texture = smokeTex
+                p.colorBlendFactor = 0
+            }
+            p.position = CGPoint(x: CGFloat.random(in: -10...10),
+                                 y: CGFloat.random(in: -4...4))
+            p.alpha = 0.85
+            let drift = SKAction.moveBy(x: CGFloat.random(in: -4...4),
+                                        y: CGFloat.random(in: 16...26),
+                                        duration: 0.75)
+            let fade = SKAction.fadeOut(withDuration: 0.75)
+            let grow = SKAction.scale(to: 1.5, duration: 0.75)
+            p.run(SKAction.sequence([SKAction.group([drift, fade, grow]), .removeFromParent()]))
+            container.addChild(p)
+        }
+        // amount 24 over lifetime 0.75s → 32/sec; we run for `duration` (2.0s).
+        let interval: TimeInterval = 0.04
+        container.run(SKAction.repeatForever(SKAction.sequence([spawn, .wait(forDuration: interval)])),
+                      withKey: stopKey)
+        container.run(SKAction.sequence([
+            .wait(forDuration: duration),
+            SKAction.run { [weak container] in container?.removeAction(forKey: stopKey) },
+            .wait(forDuration: 0.8),
+            .removeFromParent(),
+        ]))
+        return container
+    }
+
+    /// One-shot shrapnel burst at the explode moment (Godot SigmaWall.gd
+    /// `explode()` triggers `remains.emitting = true`; remains is a
+    /// `GPUParticles2D` with one_shot=true, explosiveness=1.0, amount=24,
+    /// lifetime=1.25s, direction (0,-1,0) → Swift +Y, gravity (0, 800, 0) →
+    /// Swift -Y (falls back down), 6×3 anim of remains_gray.png).
+    static func sigmaWallRemainsBurst(at point: CGPoint) -> SKNode {
+        let container = SKNode()
+        container.position = point
+        container.zPosition = 82
+        let anim = EffectAtlases.animation(.remainsGray)
+        for _ in 0..<24 {
+            let p: SKSpriteNode
+            if let firstFrame = anim?.textures.first {
+                p = SKSpriteNode(texture: firstFrame, size: CGSize(width: 18, height: 18))
+            } else {
+                p = SKSpriteNode(color: SKColor(red: 0.55, green: 0.55, blue: 0.6, alpha: 1.0),
+                                 size: CGSize(width: 6, height: 6))
+            }
+            p.position = CGPoint(x: CGFloat.random(in: -3...3),
+                                 y: CGFloat.random(in: -3...3))
+            // Initial outward + upward velocity (Godot direction +Y in Y-down,
+            // i.e. up; Swift +Y up). Gravity pulls back down.
+            let initialUp = CGFloat.random(in: 60...140)
+            let initialSide = CGFloat.random(in: -90...90)
+            let lifetime: TimeInterval = 1.25
+            let g: CGFloat = 800   // Godot gravity Vector3(0, 800, 0)
+            // Approximate ballistic by stepping with a custom action: position
+            // y(t) = vy*t - 0.5*g*t² (Y-up); x(t) = vx*t.
+            let custom = SKAction.customAction(withDuration: lifetime) { node, elapsed in
+                let t = CGFloat(elapsed)
+                node.position = CGPoint(
+                    x: initialSide * t,
+                    y: initialUp * t - 0.5 * g * t * t
+                )
+            }
+            let fade = SKAction.fadeOut(withDuration: lifetime)
+            if let anim {
+                let animate = SKAction.animate(with: anim.textures, timePerFrame: anim.timePerFrame)
+                p.run(SKAction.sequence([SKAction.group([custom, fade, animate]), .removeFromParent()]))
+            } else {
+                p.run(SKAction.sequence([SKAction.group([custom, fade]), .removeFromParent()]))
+            }
+            container.addChild(p)
+        }
+        container.run(SKAction.sequence([.wait(forDuration: 1.4), .removeFromParent()]))
+        return container
+    }
 }
