@@ -1091,14 +1091,16 @@ func applyPixelArtCanvasCSS(canvas: JSObject) {
 
 @MainActor
 func sizeCanvasToViewport(canvas: JSObject) {
-    // Aspect-fit the native canvas to the #stage container (which excludes the
-    // debug panel strip). Fractional scaling is fine — `image-rendering:
-    // pixelated` keeps pixel edges crisp at non-integer multiples.
+    // Aspect-fit the native canvas to the optional #stage container (which
+    // excludes the debug panel strip when present). Fractional scaling is
+    // fine — `image-rendering: pixelated` keeps pixel edges crisp at
+    // non-integer multiples. Falls back to the viewport when #stage is absent.
     let document = JSObject.global.document
-    let stage = document.getElementById("stage")
+    let stage = document.getElementById("stage").object
     let containerW: Double
     let containerH: Double
-    if let rect = stage.getBoundingClientRect().object,
+    if let stage,
+       let rect = stage.getBoundingClientRect?().object,
        let w = rect.width.number, let h = rect.height.number, w > 0, h > 0 {
         containerW = w
         containerH = h
