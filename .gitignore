@@ -1,23 +1,66 @@
-# Swift / SwiftPM build artifacts
+# =========================
+# Swift / SwiftPM
+# =========================
 .build/
 .build-*/
 .swiftpm/
 Packages/
+# Package.resolved is tracked: this is an executable (App), reproducible deps matter.
+
+# =========================
+# Xcode
+# =========================
 *.xcodeproj
 *.xcworkspace
 xcuserdata/
+DerivedData/
+*.xcuserstate
 *.playground
 
-# macOS
-.DS_Store
+# =========================
+# WASM build outputs
+# =========================
+*.wasm
+*.wasm.map
 
-# Editor / IDE
-.vscode/
-.idea/
-*.swp
-*.swo
-
+# =========================
 # Playwright (tests/e2e)
+# =========================
 node_modules/
 playwright-report/
 test-results/
+playwright/.cache/
+
+# =========================
+# macOS
+# =========================
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# =========================
+# Editor / IDE
+# =========================
+.vscode/
+.idea/
+*.iml
+*.swp
+*.swo
+*~
+
+# =========================
+# Secrets
+# =========================
+.env
+.env.*.local
+*.pem
+*.key
+
+# =========================
+# Misc
+# =========================
+*.log
+*.tmp
+*.temp
+Thumbs.db
