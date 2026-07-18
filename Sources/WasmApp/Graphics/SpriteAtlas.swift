@@ -8,6 +8,7 @@ import OpenSpriteKit
 struct SpriteAnimation {
     let textures: [SKTexture]
     let timePerFrame: TimeInterval
+    let firstFrameIndex: Int
 
     var duration: TimeInterval { timePerFrame * TimeInterval(textures.count) }
 }
@@ -58,7 +59,8 @@ final class SpriteAtlas {
             let avgMs = durations.isEmpty ? 100 : durations.reduce(0, +) / durations.count
             anims[tag.name] = SpriteAnimation(
                 textures: frames,
-                timePerFrame: TimeInterval(avgMs) / 1000.0
+                timePerFrame: TimeInterval(avgMs) / 1000.0,
+                firstFrameIndex: lo
             )
         }
 
@@ -97,7 +99,8 @@ final class SpriteAtlas {
 
         let anim = SpriteAnimation(
             textures: textures,
-            timePerFrame: TimeInterval(frameDurationMs) / 1000.0
+            timePerFrame: TimeInterval(frameDurationMs) / 1000.0,
+            firstFrameIndex: 0
         )
         return SpriteAtlas(parentTexture: parent, animations: [tag: anim])
     }

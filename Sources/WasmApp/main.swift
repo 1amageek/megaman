@@ -17,6 +17,8 @@ enum CanvasConfig {
 
 nonisolated(unsafe) var renderer: SKRenderer?
 nonisolated(unsafe) var battleScene: BossBattleScene?
+nonisolated(unsafe) var previewScene: PlayerPreviewScene?
+nonisolated(unsafe) var bossPreviewScene: BossPreviewScene?
 nonisolated(unsafe) var startTime: Double = 0
 nonisolated(unsafe) var animationCallback: JSClosure?
 nonisolated(unsafe) var frameCount: Int = 0
@@ -73,6 +75,23 @@ func performSetup() async {
     // Attach input listeners (held + edge-triggered keyboard state).
     InputManager.shared.setup()
 
+    // Wire up the user-gesture unlock so BGM/SFX can fire after the first key press.
+    AudioManager.shared.setup()
+
+    // Branch on the URL query string:
+    //   /wasm/index.html               → boss arena (default)
+    //   /assets/player-preview.html    → player preview (?preview=player)
+    //   /assets/boss-preview.html      → boss attack preview (?preview=boss)
+    let search = currentLocationSearch()
+    if search.contains("preview=player") {
+        await performPreviewSetup(canvasElement: canvasElement)
+        return
+    }
+    if search.contains("preview=boss") {
+        await performBossPreviewSetup(canvasElement: canvasElement)
+        return
+    }
+
     // Build the boss battle scene at the native resolution.
     let scene = BossBattleScene(stage: .bossArena)
     scene.scaleMode = .fill
@@ -128,6 +147,10 @@ func loadSpriteAtlases() async {
     async let heavyLoad  = SpriteLoader.load(group: "projectiles", name: "heavy_shot")
     async let charge1Load = SpriteLoader.load(group: "effects", name: "charge_1")
     async let charge2Load = SpriteLoader.load(group: "effects", name: "charge_2")
+    async let bgLoad      = SpriteLoader.loadGrid(group: "background", name: "sigmapalace_bg",
+                                                  cols: 1, rows: 1, frameDurationMs: 0, tag: "bg")
+    async let cloudsLoad  = SpriteLoader.loadGrid(group: "background", name: "sigmapalace_clouds",
+                                                  cols: 1, rows: 1, frameDurationMs: 0, tag: "clouds")
 
     do {
         let atlas = try await playerLoad
@@ -199,6 +222,14 @@ func loadSpriteAtlases() async {
     } catch {
         print("effects/charge_2 failed: \(error)")
     }
+
+    let bgAtlas = try? await bgLoad
+    if bgAtlas != nil { print("background/sigmapalace_bg loaded") }
+    else { print("background/sigmapalace_bg failed (using primitive backdrop)") }
+    let cloudsAtlas = try? await cloudsLoad
+    if cloudsAtlas != nil { print("background/sigmapalace_clouds loaded") }
+    else { print("background/sigmapalace_clouds failed (no parallax)") }
+    scene.attachBackgroundAtlas(bg: bgAtlas, clouds: cloudsAtlas)
 
     // Godot effect PNGs ship without an Aseprite JSON sidecar; the Godot
     // `ParticleProcessMaterial` + `TextureAtlas` H/V frame counts drive the
@@ -1022,6 +1053,472 @@ private func facingFrom(_ s: String?) -> Facing? {
     case "left": return .left
     case "right": return .right
     default: return nil
+    }
+}
+
+@MainActor
+private func currentLocationSearch() -> String {
+    JSObject.global.location.search.string ?? ""
+}
+
+// MARK: - Player preview mode
+// Backs /assets/player-preview.html. Boots a `PlayerPreviewScene` (no boss,
+// no AI, no projectiles), loads ONLY the player + charge-overlay atlases,
+// then exposes `window.__megaman_preview` so the page UI can drive each
+// `Player.Action`.
+
+@MainActor
+func performPreviewSetup(canvasElement: JSObject) async {
+    let scene = PlayerPreviewScene(forPreview: ())
+    scene.scaleMode = .fill
+    previewScene = scene
+
+    let skRenderer: SKRenderer
+    #if arch(wasm32)
+    skRenderer = SKRenderer(canvas: canvasElement)
+    #else
+    skRenderer = SKRenderer()
+    #endif
+    do {
+        try await skRenderer.initialize()
+        skRenderer.resize(width: CanvasConfig.width, height: CanvasConfig.height)
+    } catch {
+        print("Failed to initialize SKRenderer (preview): \(error)")
+        return
+    }
+
+    skRenderer.scene = scene
+    renderer = skRenderer
+
+    let skView = SKView()
+    scene.didMove(to: skView)
+
+    startTime = JSObject.global.performance.now().number ?? 0
+    print("Player preview ready — \(CanvasConfig.width)x\(CanvasConfig.height)")
+    startPreviewAnimationLoop()
+
+    // Atlases — only the X player + the two charge overlays. Skip boss,
+    // projectiles, and stage backgrounds: the preview page never shows them.
+    Task { await loadPreviewAtlases() }
+
+    installPreviewHarness()
+}
+
+@MainActor
+func loadPreviewAtlases() async {
+    guard let scene = previewScene else { return }
+    async let playerLoad  = SpriteLoader.load(group: "player", name: "x")
+    async let charge1Load = SpriteLoader.load(group: "effects", name: "charge_1")
+    async let charge2Load = SpriteLoader.load(group: "effects", name: "charge_2")
+
+    do {
+        let atlas = try await playerLoad
+        scene.attachPlayerAtlas(atlas)
+        print("[preview] player/x loaded — \(atlas.animations.count) tags")
+    } catch {
+        print("[preview] player/x failed: \(error)")
+    }
+    do {
+        let atlas = try await charge1Load
+        scene.attachChargeAtlas(atlas, for: 1)
+    } catch {
+        print("[preview] effects/charge_1 failed: \(error)")
+    }
+    do {
+        let atlas = try await charge2Load
+        scene.attachChargeAtlas(atlas, for: 2)
+    } catch {
+        print("[preview] effects/charge_2 failed: \(error)")
+    }
+
+    // The grid effect atlases (sparks, dash, smoke, airdash, death, light)
+    // back the preview's particle tests via PlayerEffects → EffectAtlases.
+    // Sequential load mirrors the boss-arena order — running them as
+    // additional `async let` alongside the player atlas starves the
+    // JavaScriptKit fetch promise queue on WASM.
+    await loadGridAtlas(name: "sparks",   cols: 3, rows: 2, frameDurationMs: 60,  kind: .sparks)
+    await loadGridAtlas(name: "circle",   cols: 1, rows: 1,                       kind: .circle)
+    await loadGridAtlas(name: "dash",     cols: 3, rows: 2, frameDurationMs: 60,  kind: .dash)
+    await loadGridAtlas(name: "smoke",    cols: 3, rows: 3, frameDurationMs: 60,  kind: .smoke)
+    await loadGridAtlas(name: "airdash",  cols: 3, rows: 2, frameDurationMs: 60,  kind: .airdash)
+    await loadGridAtlas(name: "death",    cols: 3, rows: 2, frameDurationMs: 140, kind: .death)
+    await loadGridAtlas(name: "light",    cols: 1, rows: 1,                       kind: .light)
+}
+
+@MainActor
+func startPreviewAnimationLoop() {
+    animationCallback = JSClosure { _ -> JSValue in
+        MainActor.assumeIsolated {
+            if stepMode { return }
+            if let callback = animationCallback {
+                _ = JSObject.global.requestAnimationFrame!(callback)
+            }
+            guard let skRenderer = renderer else { return }
+            let now = JSObject.global.performance.now().number ?? 0
+            let currentTime = (now - startTime) / 1000.0
+            skRenderer.update(atTime: currentTime)
+            skRenderer.render()
+            frameCount &+= 1
+        }
+        return .undefined
+    }
+    if let callback = animationCallback {
+        _ = JSObject.global.requestAnimationFrame!(callback)
+    }
+}
+
+nonisolated(unsafe) var previewHarnessClosures: [JSClosure] = []
+
+@MainActor
+func installPreviewHarness() {
+    let harness = JSObject.global.Object.function!.new()
+
+    let listActions = JSClosure { _ -> JSValue in
+        // `new Array(swiftArr)` wraps the Swift array as a single element
+        // (`[[...]]`) because JS Array's single-arg form interprets a
+        // non-numeric value as the sole element. Build the JS array with
+        // explicit integer length, then index-assign each name.
+        let names = Player.Action.allCases.map { $0.rawValue }
+        let arr = JSObject.global.Array.function!.new(JSValue.number(Double(names.count)))
+        for (i, name) in names.enumerated() {
+            arr[i] = .string(name)
+        }
+        return .object(arr)
+    }
+
+    let setAction = JSClosure { args -> JSValue in
+        MainActor.assumeIsolated {
+            guard let scene = previewScene,
+                  let raw = args.first?.string,
+                  let action = Player.Action(rawValue: raw) else { return }
+            scene.player.preview(action)
+            scene.syncWall()
+        }
+        return .undefined
+    }
+
+    let setFacing = JSClosure { args -> JSValue in
+        MainActor.assumeIsolated {
+            guard let scene = previewScene,
+                  let f = facingFrom(args.first?.string) else { return }
+            scene.player.face(f)
+            // Re-apply the active action so `wallContact` (set inside
+            // Player.preview) tracks the new facing — otherwise switching
+            // facing while .slide/.wallJump is selected leaves the dust
+            // dispatcher pointing at the previous wall side.
+            if let action = scene.player.previewAction {
+                scene.player.preview(action)
+            }
+            scene.syncWall()
+        }
+        return .undefined
+    }
+
+    let setPaused = JSClosure { args -> JSValue in
+        MainActor.assumeIsolated {
+            guard let scene = previewScene else { return }
+            let v = args.first?.boolean ?? !scene.isPaused
+            scene.isPaused = v
+        }
+        return .undefined
+    }
+
+    let getInfo = JSClosure { _ -> JSValue in
+        let snapshot: (
+            action: String,
+            tag: String,
+            facing: String,
+            paused: Bool,
+            frameCount: Double,
+            atlasFrame: Int?
+        )? =
+            MainActor.assumeIsolated {
+                guard let scene = previewScene else { return nil }
+                let action = scene.player.previewAction?.rawValue ?? "(none)"
+                let tag = scene.player.previewAction
+                    .flatMap { Player.spec(for: $0).tag } ?? ""
+                return (
+                    action,
+                    tag,
+                    scene.player.facing == .left ? "left" : "right",
+                    scene.isPaused,
+                    Double(frameCount),
+                    scene.player.previewFrameIndex
+                )
+            }
+        guard let s = snapshot else { return .null }
+        let obj = JSObject.global.Object.function!.new()
+        obj.action = .string(s.action)
+        obj.tag = .string(s.tag)
+        obj.facing = .string(s.facing)
+        obj.paused = .boolean(s.paused)
+        obj.frameCount = .number(s.frameCount)
+        obj.atlasFrame = s.atlasFrame.map { .number(Double($0)) } ?? .null
+        return .object(obj)
+    }
+
+    // Re-arm the active action — useful for one-shot animations (.dash,
+    // .airDash, .damage, .deathBurst …) where the user wants to replay the
+    // VFX pulse without changing the selection.
+    let restart = JSClosure { _ -> JSValue in
+        MainActor.assumeIsolated {
+            guard let scene = previewScene,
+                  let action = scene.player.previewAction else { return }
+            scene.player.preview(action)
+        }
+        return .undefined
+    }
+
+    harness.listActions = .object(listActions)
+    harness.setAction = .object(setAction)
+    harness.setFacing = .object(setFacing)
+    harness.setPaused = .object(setPaused)
+    harness.getInfo = .object(getInfo)
+    harness.restart = .object(restart)
+
+    JSObject.global.__megaman_preview = .object(harness)
+
+    previewHarnessClosures = [
+        listActions, setAction, setFacing, setPaused, getInfo, restart,
+    ]
+
+    print("Preview harness installed at window.__megaman_preview")
+}
+
+// MARK: - Boss preview mode
+// Backs /assets/boss-preview.html. Boots a `BossPreviewScene` (no AI loop, no
+// SigmaIntro, no player input). Loads the boss + sigma effect atlases and
+// exposes `window.__megaman_boss_preview` so the page UI can drive each
+// `BossAI.AttackKind` and reposition the ghost player.
+
+@MainActor
+func performBossPreviewSetup(canvasElement: JSObject) async {
+    let scene = BossPreviewScene(forPreview: ())
+    scene.scaleMode = .fill
+    bossPreviewScene = scene
+
+    let skRenderer: SKRenderer
+    #if arch(wasm32)
+    skRenderer = SKRenderer(canvas: canvasElement)
+    #else
+    skRenderer = SKRenderer()
+    #endif
+    do {
+        try await skRenderer.initialize()
+        skRenderer.resize(width: CanvasConfig.width, height: CanvasConfig.height)
+    } catch {
+        print("Failed to initialize SKRenderer (boss preview): \(error)")
+        return
+    }
+
+    skRenderer.scene = scene
+    renderer = skRenderer
+
+    let skView = SKView()
+    scene.didMove(to: skView)
+
+    startTime = JSObject.global.performance.now().number ?? 0
+    print("Boss preview ready — \(CanvasConfig.width)x\(CanvasConfig.height)")
+    // The player-preview animation loop is renderer-only (no scene-specific
+    // hooks), so the boss preview rides the same callback.
+    startPreviewAnimationLoop()
+
+    Task { await loadBossPreviewAtlases() }
+    installBossPreviewHarness()
+}
+
+@MainActor
+func loadBossPreviewAtlases() async {
+    guard let scene = bossPreviewScene else { return }
+    async let playerLoad = SpriteLoader.load(group: "player", name: "x")
+    async let bossLoad   = SpriteLoader.load(group: "boss", name: "satan_sigma")
+    async let ballLoad   = SpriteLoader.load(group: "boss", name: "sigma_ball")
+    async let lanceLoad  = SpriteLoader.load(group: "boss", name: "sigma_lance")
+    async let laserLoad  = SpriteLoader.load(group: "boss", name: "sigma_laser")
+
+    do {
+        let atlas = try await playerLoad
+        scene.attachPlayerAtlas(atlas)
+        print("[boss-preview] player/x loaded")
+    } catch {
+        print("[boss-preview] player/x failed: \(error)")
+    }
+    do {
+        let atlas = try await bossLoad
+        scene.attachBossAtlas(atlas)
+        print("[boss-preview] boss/satan_sigma loaded — \(atlas.animations.count) tags")
+    } catch {
+        print("[boss-preview] boss/satan_sigma failed: \(error)")
+    }
+    do {
+        let atlas = try await ballLoad
+        scene.attachProjectileAtlas(atlas, for: .sigmaBall)
+    } catch {
+        print("[boss-preview] boss/sigma_ball failed: \(error)")
+    }
+    do {
+        let atlas = try await lanceLoad
+        scene.attachProjectileAtlas(atlas, for: .sigmaLance)
+    } catch {
+        print("[boss-preview] boss/sigma_lance failed: \(error)")
+    }
+    do {
+        let atlas = try await laserLoad
+        scene.attachProjectileAtlas(atlas, for: .sigmaLaser)
+    } catch {
+        print("[boss-preview] boss/sigma_laser failed: \(error)")
+    }
+
+    // Sigma effect overlays — sequential load mirrors the boss-arena order
+    // (parallel async let starves the JSKit fetch promise queue on WASM).
+    await loadGridAtlas(name: "sigma_trail",       cols: 1, rows: 9, frameDurationMs: 33,  kind: .sigmaTrail)
+    await loadGridAtlas(name: "sigma_particles",   cols: 1, rows: 1,                       kind: .sigmaParticle)
+    await loadGridAtlas(name: "sigma_particles2",  cols: 3, rows: 3, frameDurationMs: 56,  kind: .sigmaParticleAnim)
+}
+
+nonisolated(unsafe) var bossPreviewHarnessClosures: [JSClosure] = []
+
+@MainActor
+func installBossPreviewHarness() {
+    let harness = JSObject.global.Object.function!.new()
+
+    let listAttacks = JSClosure { _ -> JSValue in
+        let names = bossAttackKindNames()
+        let arr = JSObject.global.Array.function!.new(JSValue.number(Double(names.count)))
+        for (i, n) in names.enumerated() { arr[i] = .string(n) }
+        return .object(arr)
+    }
+
+    let setActiveAttack = JSClosure { args -> JSValue in
+        MainActor.assumeIsolated {
+            guard let scene = bossPreviewScene,
+                  let raw = args.first?.string,
+                  let kind = bossAttackKind(named: raw) else { return }
+            scene.setActiveAttack(kind)
+        }
+        return .undefined
+    }
+
+    let stop = JSClosure { _ -> JSValue in
+        MainActor.assumeIsolated {
+            bossPreviewScene?.stopActiveAttack()
+        }
+        return .undefined
+    }
+
+    let setPlayerX = JSClosure { args -> JSValue in
+        MainActor.assumeIsolated {
+            guard let scene = bossPreviewScene,
+                  let v = args.first?.number else { return }
+            scene.setPlayerX(CGFloat(v))
+        }
+        return .undefined
+    }
+
+    let setBossFacing = JSClosure { args -> JSValue in
+        MainActor.assumeIsolated {
+            guard let scene = bossPreviewScene,
+                  let f = facingFrom(args.first?.string) else { return }
+            scene.boss.face(f)
+        }
+        return .undefined
+    }
+
+    let setPaused = JSClosure { args -> JSValue in
+        MainActor.assumeIsolated {
+            guard let scene = bossPreviewScene else { return }
+            let v = args.first?.boolean ?? !scene.isPaused
+            scene.isPaused = v
+        }
+        return .undefined
+    }
+
+    let getInfo = JSClosure { _ -> JSValue in
+        struct Snapshot {
+            let activeAttack: String
+            let stage: String
+            let stageNames: [String]
+            let bossX: Double
+            let bossY: Double
+            let playerX: Double
+            let playerY: Double
+            let paused: Bool
+            let frameCount: Double
+        }
+        let snapshot: Snapshot? = MainActor.assumeIsolated {
+            guard let scene = bossPreviewScene else { return nil }
+            let attackName: String
+            if let active = scene.boss.activeAttack, !active.isFinished {
+                attackName = String(describing: type(of: active))
+            } else {
+                attackName = "(none)"
+            }
+            return Snapshot(
+                activeAttack: attackName,
+                stage: scene.activeStageLabel ?? "",
+                stageNames: scene.activeStageNames ?? [],
+                bossX: Double(scene.boss.position.x),
+                bossY: Double(scene.boss.position.y),
+                playerX: Double(scene.player.position.x),
+                playerY: Double(scene.player.position.y),
+                paused: scene.isPaused,
+                frameCount: Double(frameCount)
+            )
+        }
+        guard let s = snapshot else { return .null }
+        let obj = JSObject.global.Object.function!.new()
+        obj.activeAttack = .string(s.activeAttack)
+        obj.stage = .string(s.stage)
+        let arr = JSObject.global.Array.function!.new(JSValue.number(Double(s.stageNames.count)))
+        for (i, n) in s.stageNames.enumerated() { arr[i] = .string(n) }
+        obj.stageNames = .object(arr)
+        obj.bossX = .number(s.bossX)
+        obj.bossY = .number(s.bossY)
+        obj.playerX = .number(s.playerX)
+        obj.playerY = .number(s.playerY)
+        obj.paused = .boolean(s.paused)
+        obj.frameCount = .number(s.frameCount)
+        return .object(obj)
+    }
+
+    harness.listAttacks = .object(listAttacks)
+    harness.setActiveAttack = .object(setActiveAttack)
+    harness.stop = .object(stop)
+    harness.setPlayerX = .object(setPlayerX)
+    harness.setBossFacing = .object(setBossFacing)
+    harness.setPaused = .object(setPaused)
+    harness.getInfo = .object(getInfo)
+
+    JSObject.global.__megaman_boss_preview = .object(harness)
+
+    bossPreviewHarnessClosures = [
+        listAttacks, setActiveAttack, stop, setPlayerX,
+        setBossFacing, setPaused, getInfo,
+    ]
+
+    print("Boss preview harness installed at window.__megaman_boss_preview")
+}
+
+@MainActor
+private func bossAttackKindNames() -> [String] {
+    BossAI.AttackKind.allCases.map { kind in
+        switch kind {
+        case .groundCombo: return "groundCombo"
+        case .jumpCombo:   return "jumpCombo"
+        case .lanceThrow:  return "lanceThrow"
+        case .airCombo:    return "airCombo"
+        }
+    }
+}
+
+@MainActor
+private func bossAttackKind(named raw: String) -> BossAI.AttackKind? {
+    switch raw {
+    case "groundCombo": return .groundCombo
+    case "jumpCombo":   return .jumpCombo
+    case "lanceThrow":  return .lanceThrow
+    case "airCombo":    return .airCombo
+    default:            return nil
     }
 }
 

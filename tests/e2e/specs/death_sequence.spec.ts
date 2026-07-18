@@ -37,14 +37,16 @@ test("Player death sequence fades and returns to .intro after ~5 s", async ({ pa
     await waitForRunning(page);
     await waitForHarness(page);
 
-    // Passive contact damage is 8/frame — parking the Player on top of the
-    // boss drains HP quickly. The harness default Player spawn sits to the
-    // left of Sigma, so the boss will often walk into us as it approaches.
-    // 20 s budget: ~4.76 s Godot-parity Sigma intro + up to ~4 s to first
-    // defeat + 5 s defeat window + ~6 s headroom for the second intro cycle
-    // (which replays the full cutscene via `resetBattle`).
+    // Passive contact damage is 8 per touch with 1.75 s player iframes —
+    // four contact hits drain the 28-HP pool. The harness default Player
+    // spawn sits at width*0.20 with Sigma at width*0.80, so the boss must
+    // close the arena before the first hit. 30 s budget: ~4.76 s
+    // Godot-parity Sigma intro + ~13 s fighting (boss approach + four
+    // iframe-gated contact hits) + 5 s defeat window + ~7 s headroom for
+    // the second intro cycle (which replays the full cutscene via
+    // `resetBattle`).
     const start = Date.now();
-    const deadline = start + 20_000;
+    const deadline = start + 30_000;
     const phases: { t: number; phase: string }[] = [];
     let sawDefeat = false;
     let sawIntroAfterDefeat = false;

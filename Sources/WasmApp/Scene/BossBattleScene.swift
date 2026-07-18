@@ -8,7 +8,7 @@ import OpenSpriteKit
 // Wires together Player, Boss, BossAI, projectiles, HUD, and collision.
 
 @MainActor
-final class BossBattleScene: SKScene {
+final class BossBattleScene: SKScene, PlayerWorld {
     enum Phase {
         case intro
         case fighting
@@ -29,6 +29,7 @@ final class BossBattleScene: SKScene {
     private(set) var bossAI: BossAI!
     private var bossHealthBar: HealthBar!
     private var playerHealthBar: HealthBar!
+    private var weaponBar: WeaponBar!
     private var projectiles: [Projectile] = []
     private var lastUpdateTime: TimeInterval?
     private(set) var phase: Phase = .intro
@@ -121,6 +122,14 @@ final class BossBattleScene: SKScene {
         projectileAtlases[kind] = atlas
     }
 
+    /// Register the Sigma Palace backdrop textures. Replaces the placeholder
+    /// solid-colour rects with the source `final_fight.png` mural plus a
+    /// scrolling `far_clouds.png` parallax band. Either may be nil — the
+    /// backdrop falls back to its primitive layout when an atlas is missing.
+    func attachBackgroundAtlas(bg: SpriteAtlas?, clouds: SpriteAtlas?) {
+        backdrop.attachAtlases(bg: bg, clouds: clouds)
+    }
+
     /// Register a charge-overlay atlas. Level 1 corresponds to mid-charge
     /// (Godot `ChargingParticle`), Level 2 to full charge (`ChargedParticle`).
     func attachChargeAtlas(_ atlas: SpriteAtlas, for level: Int) {
@@ -144,7 +153,7 @@ final class BossBattleScene: SKScene {
         addChild(backdrop)
 
         player.position = stage.playerSpawn
-        player.battleScene = self
+        player.world = self
         addChild(player)
 
         boss.position = stage.bossSpawn
@@ -155,6 +164,11 @@ final class BossBattleScene: SKScene {
         playerHealthBar.position = CGPoint(x: 14, y: stage.height - 40)
         playerHealthBar.zPosition = 100
         addChild(playerHealthBar)
+
+        weaponBar = WeaponBar()
+        weaponBar.position = CGPoint(x: 14, y: stage.height - 12)
+        weaponBar.zPosition = 100
+        addChild(weaponBar)
 
         bossHealthBar = HealthBar(kind: .boss, maxValue: boss.maxHealth)
         bossHealthBar.position = CGPoint(x: stage.width - 14, y: stage.height - 40)
@@ -224,6 +238,9 @@ final class BossBattleScene: SKScene {
 
             if isPaused { return }
 
+            input.pollGamepad()
+            backdrop.tick(dt)
+
             switch phase {
             case .intro:
                 // Godot Intro.gd drives a 9-stage cutscene that ends by emitting
@@ -234,6 +251,10 @@ final class BossBattleScene: SKScene {
                 // boss attacks are gated off (player.tick + collisions are
                 // skipped and bossAI.tick isn't called).
                 sigmaIntro.tick(dt)
+                // Player.tickIntro advances the beam-in animation (Godot
+                // Modules/Intro.gd) without accepting input, so X visibly
+                // materialises while Sigma descends.
+                player.tickIntro(dt)
                 tickSigmaWalls(dt)
                 bossHealthBar.tickFillAnimation(dt)
                 tickScreenShake(dt)
@@ -262,17 +283,30 @@ final class BossBattleScene: SKScene {
                 tickSigmaWalls(dt)
                 tickProjectiles(dt)
                 tickVictorySequence(dt)
+                // Once the fade is fully opaque, any shoot/jump press kicks off
+                // a fresh battle. The 14s hold is long enough that the player
+                // can read the result; pressing earlier is ignored on purpose.
+                if phaseTimer >= Self.victoryFadeEnd,
+                   input.shootPressed || input.jumpPressed {
+                    resetGame()
+                }
             case .gameOver:
                 phaseTimer += dt
                 // Godot `game_over` → go_to_stage_select jumps out of the battle
                 // scene entirely. The E2E port has no outer shell to return to,
-                // so we hold the Game Over screen for 3 s then reset everything
-                // (lives + phase) to re-enter the intro loop.
-                if phaseTimer >= 3.0 { resetGame() }
+                // so we hold the Game Over screen for at least 3 s, then wait
+                // on a shoot/jump press to re-enter the intro loop. Pressing
+                // earlier is ignored so an in-flight action key doesn't
+                // immediately skip the game-over screen.
+                if phaseTimer >= 3.0,
+                   input.shootPressed || input.jumpPressed {
+                    resetGame()
+                }
             }
 
             playerHealthBar.update(current: player.currentHealth)
             bossHealthBar.update(current: boss.currentHealth)
+            weaponBar.update(chargeLevel: player.chargeLevel)
             input.endFrame()
 
             if dt > 0 {
@@ -438,7 +472,7 @@ final class BossBattleScene: SKScene {
             switch projectile.owner {
             case .player:
                 if boss.isAlive, projectile.hitbox.intersects(boss.hitbox) {
-                    boss.takeDamage(projectile.damage, inflicterX: projectile.position.x)
+                    _ = boss.takeDamage(projectile.damage, inflicterX: projectile.position.x)
                     if projectile.kind == .lemon { projectile.isAlive = false }
                 }
             case .boss:
@@ -582,6 +616,7 @@ final class BossBattleScene: SKScene {
         phase = .defeat
         phaseTimer = 0
         ensureFadeOverlay()
+        AudioManager.shared.stopBGM()
         // Kill any in-progress attack so its hitbox can't tick or damage on
         // the final frame before the scene transitions. Leave projectiles
         // alive so showpieces like the OverdriveAttack beam keep rendering
@@ -608,6 +643,8 @@ final class BossBattleScene: SKScene {
         boss.enterDeathSequence()
         player.enterVictoryPose()
         ensureFadeOverlay()
+        AudioManager.shared.stopBGM()
+        AudioManager.shared.playSFX(AudioAssets.bossDeath)
     }
 
     /// 3-stage cadence ported from Godot BossDeath.gd:
@@ -657,6 +694,7 @@ final class BossBattleScene: SKScene {
         let bx = boss.position.x + CGFloat.random(in: -Boss.bodySize.width / 2 ... Boss.bodySize.width / 2)
         let by = boss.position.y + CGFloat.random(in: 8 ... Boss.bodySize.height - 4)
         addChild(BossEffects.bossDeathBurst(at: CGPoint(x: bx, y: by)))
+        AudioManager.shared.playSFX(AudioAssets.explosion, volume: 0.5)
     }
 
     /// Lazy-create the full-screen black fade overlay. zPosition sits above the
@@ -769,10 +807,12 @@ final class BossBattleScene: SKScene {
     // audio or signal bus, so SigmaIntro calls these methods directly in the
     // same order to preserve ordering semantics.
 
-    /// Intro stage 3: `Event.emit_signal("play_boss_music")`. We have no audio
-    /// pipeline yet; kept as a seam so the hook is observable for tests.
+    /// Intro stage 3: `Event.emit_signal("play_boss_music")`. Triggers the
+    /// boss alert sting and the looping BGM (the latter waits on the autoplay
+    /// unlock; AudioManager replays it the first time the user presses a key).
     func onBossMusicStart() {
-        // No-op — audio not wired.
+        AudioManager.shared.playSFX(AudioAssets.bossAppear)
+        AudioManager.shared.playBGM(url: AudioAssets.sigmaLoop, volume: 0.45)
     }
 
     /// Intro stage 4 throne destruction — flash overlay at the boss's sprite

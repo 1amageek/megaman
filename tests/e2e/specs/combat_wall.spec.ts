@@ -120,9 +120,13 @@ test.describe("combat and wall behavior", () => {
         expect(slide?.state, `expected wall slide at left wall: ${JSON.stringify(slide)}`).toBe("slide");
 
         await page.keyboard.down("Space");
+        // Walljump.gd phase A locks vx=0/vy=0 for `start_delay = 0.116s`
+        // (Player.tscn override). The away-velocity only becomes observable in
+        // phase B, so step ~10 frames (~167 ms) past start_delay before
+        // sampling — still well inside phase B's 0.15 s window.
         await page.evaluate(() => {
             const h = (window as unknown as { __megaman_test: Harness }).__megaman_test;
-            h.step(1000 / 60, 2);
+            h.step(1000 / 60, 10);
         });
         const jump = await page.evaluate(() => {
             const h = (window as unknown as { __megaman_test: Harness }).__megaman_test;

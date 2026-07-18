@@ -151,3 +151,28 @@ final class JumpCombo: Attack {
         timer = 0
     }
 }
+
+// MARK: - AttackPreviewable
+extension JumpCombo: AttackPreviewable {
+    static let previewStageNames: [String] = [
+        "prepare",
+        "approach",
+        "groundSlash",
+        "rising",
+        "falling",
+        "landed",
+        "done",
+    ]
+
+    var previewStageIndex: Int {
+        switch stage {
+        case .prepare:     return 0
+        case .approach:    return 1
+        case .groundSlash: return 2
+        case .rising:      return 3
+        case .falling:     return 4
+        case .landed:      return 5
+        case .done:        return 6
+        }
+    }
+}

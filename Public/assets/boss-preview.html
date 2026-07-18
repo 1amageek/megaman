@@ -1,0 +1,458 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>Boss Preview — WASM (OpenSpriteKit)</title>
+<style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body {
+        background: #1a1a1a; color: #ddd;
+        font: 13px/1.4 -apple-system, BlinkMacSystemFont, "Hiragino Sans", sans-serif;
+    }
+    body { padding: 16px; }
+    h1 { font-size: 14px; margin: 0 0 12px 0; color: #f8a; }
+    .layout { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 16px; align-items: start; }
+    .stage {
+        background: repeating-conic-gradient(#222 0% 25%, #2a2a2a 0% 50%) 50% 50% / 16px 16px;
+        border: 1px solid #333;
+        position: relative;
+        aspect-ratio: 4 / 3;
+        overflow: hidden;
+        display: flex; align-items: center; justify-content: center;
+    }
+    canvas#canvas {
+        image-rendering: pixelated; image-rendering: crisp-edges;
+        width: 100%; height: 100%; display: block;
+        cursor: crosshair;
+    }
+    .panel { background: #222; border: 1px solid #333; padding: 10px; margin-bottom: 12px; }
+    .panel h2 { font-size: 12px; margin: 0 0 8px 0; color: #888; text-transform: uppercase; letter-spacing: .04em; }
+    .controls { display: flex; gap: 6px; margin: 4px 0; flex-wrap: wrap; }
+    .controls button {
+        font: 11px/1 ui-monospace, Menlo, monospace;
+        background: #2a2a2a; color: #ccc; border: 1px solid #444;
+        padding: 6px 10px; cursor: pointer;
+    }
+    .controls button:hover { background: #333; border-color: #f8a; }
+    .controls button.active { background: #f8a; color: #111; border-color: #f8a; }
+
+    .attacks { display: grid; grid-template-columns: repeat(2, 1fr); gap: 4px; }
+    .attacks button {
+        font: 11px/1.25 ui-monospace, Menlo, monospace;
+        background: #2a2a2a; color: #ccc; border: 1px solid #444;
+        padding: 8px 10px; cursor: pointer; text-align: left;
+    }
+    .attacks button:hover { background: #333; border-color: #f8a; }
+    .attacks button.active { background: #f8a; color: #111; border-color: #f8a; }
+
+    .stage-row {
+        display: flex; gap: 4px; flex-wrap: wrap;
+        font-family: ui-monospace, Menlo, monospace; font-size: 10px;
+    }
+    .stage-row span {
+        padding: 4px 8px; border: 1px solid #444; background: #2a2a2a;
+        color: #888;
+    }
+    .stage-row span.active { background: #f8a; color: #111; border-color: #f8a; }
+
+    .info { font-family: ui-monospace, Menlo, monospace; font-size: 11px; color: #999; line-height: 1.7; }
+    .info span { color: #fff; }
+    .err { color: #f55; font-family: ui-monospace, monospace; padding: 8px; background: #2a1010; border: 1px solid #511; margin-bottom: 12px; }
+    .status { font-family: ui-monospace, monospace; font-size: 11px; color: #69db7c; padding: 4px 8px; background: #102218; border: 1px solid #1e4d2b; display: inline-block; }
+    .help { font-size: 11px; color: #777; margin-top: 6px; }
+</style>
+</head>
+<body>
+<h1>Boss Preview — WASM (OpenSpriteKit)</h1>
+<div id="error" class="err" hidden></div>
+<div id="bootStatus" class="status">Initializing…</div>
+<div class="layout" style="margin-top: 12px;">
+    <div class="stage">
+        <canvas id="canvas" width="384" height="256"></canvas>
+    </div>
+    <div>
+        <div class="panel">
+            <h2>Boss Attack</h2>
+            <div id="attackList" class="attacks">
+                <span class="help">Loading WASM…</span>
+            </div>
+            <div class="controls" style="margin-top: 8px;">
+                <button id="btnStop">■ Stop</button>
+                <button id="btnPause">⏯ Pause</button>
+            </div>
+            <div class="help">The selected attack runs against a ghost player using the same `Attack` state machines BossAI executes in battle.</div>
+        </div>
+
+        <div class="panel">
+            <h2>Player Position</h2>
+            <div class="controls">
+                <button data-player-preset="left">Left</button>
+                <button data-player-preset="center">Center</button>
+                <button data-player-preset="right">Right</button>
+            </div>
+            <div class="controls">
+                <button data-boss-facing="left">Boss ← Left</button>
+                <button data-boss-facing="right">Boss → Right</button>
+            </div>
+            <div class="help">Click the canvas to drop the player at that x. Y is pinned to the floor.</div>
+        </div>
+
+        <div class="panel">
+            <h2>Stage Timeline</h2>
+            <div id="stageRow" class="stage-row">
+                <span class="help">Pick an attack to see its stages.</span>
+            </div>
+            <div class="info" style="margin-top: 8px;">
+                active attack: <span id="iAttack">—</span><br>
+                active stage:  <span id="iStage">—</span><br>
+                boss pos:      <span id="iBossPos">—</span><br>
+                player pos:    <span id="iPlayerPos">—</span><br>
+                paused:        <span id="iPaused">—</span><br>
+                Swift frame#:  <span id="iFrame">—</span>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script type="module">
+// Force ?preview=boss so main.swift's performSetup branches into
+// performBossPreviewSetup. location.replace keeps history clean.
+if (!location.search.includes("preview=boss")) {
+    const q = location.search ? location.search + "&preview=boss" : "?preview=boss";
+    location.replace(location.pathname + q + location.hash);
+    throw new Error("redirecting to add ?preview=boss");
+}
+
+async function resolveWasmBase() {
+    const head = async (url) => {
+        try { const r = await fetch(url, { method: "HEAD" }); return r.ok; }
+        catch { return false; }
+    };
+    if (await head("/wasm/runtime.mjs")) return "/wasm";
+    if (await head("/runtime.mjs")) return "";
+    throw new Error("Cannot locate runtime.mjs at /wasm/ or /. Is the dev server running?");
+}
+const WASM_BASE = await resolveWasmBase();
+const { SwiftRuntime } = await import(WASM_BASE + "/runtime.mjs");
+const { WASI, File, OpenFile, ConsoleStdout } = await import("https://cdn.jsdelivr.net/npm/@bjorn3/browser_wasi_shim@0.4.1/+esm");
+
+const statusEl = document.getElementById("bootStatus");
+const errorEl  = document.getElementById("error");
+const attackListEl = document.getElementById("attackList");
+const stageRowEl   = document.getElementById("stageRow");
+const iAttack    = document.getElementById("iAttack");
+const iStage     = document.getElementById("iStage");
+const iBossPos   = document.getElementById("iBossPos");
+const iPlayerPos = document.getElementById("iPlayerPos");
+const iPaused    = document.getElementById("iPaused");
+const iFrame     = document.getElementById("iFrame");
+
+function setStatus(msg) {
+    statusEl.textContent = msg;
+    console.log("[boss-preview]", msg);
+}
+function showError(msg) {
+    errorEl.hidden = false;
+    errorEl.textContent = msg;
+    statusEl.style.color = "#ff6b6b";
+    statusEl.textContent = "Error";
+    console.error("[boss-preview]", msg);
+}
+
+// Game-coordinate constants. Must match GameConfig.{gameWidth,floorY} in Swift.
+// Render canvas is 384×256 by default; the underlying logical stage is 398
+// wide. Keep this in sync with `Stage.bossArena` if those change.
+const STAGE_WIDTH = 398;
+const STAGE_HEIGHT = 256;
+
+const state = {
+    activeAttack: null,
+    stageNames: [],
+    paused: false,
+};
+
+async function main() {
+    try {
+        setStatus("Loading WASM…");
+        const response = await fetch(WASM_BASE + "/WasmApp.wasm");
+        if (!response.ok) throw new Error("Failed to load WasmApp.wasm: " + response.status);
+        const wasmBytes = await response.arrayBuffer();
+        setStatus("WASM loaded (" + (wasmBytes.byteLength / 1024 / 1024).toFixed(1) + " MB)");
+
+        const swift = new SwiftRuntime();
+        const wasi = new WASI([], [], [
+            new OpenFile(new File([])),
+            ConsoleStdout.lineBuffered((line) => console.log("[Swift]", line)),
+            ConsoleStdout.lineBuffered((line) => console.error("[Swift]", line)),
+        ]);
+
+        let wasmMemory = null;
+        const textDecoder = new TextDecoder("utf-8");
+        const textEncoder = new TextEncoder();
+
+        let tmpRetString = undefined;
+        let tmpRetBytes = undefined;
+        let tmpRetException = undefined;
+        let tmpRetOptionalBool = undefined;
+        let tmpRetOptionalInt = undefined;
+        let tmpRetOptionalFloat = undefined;
+        let tmpRetOptionalDouble = undefined;
+        let tmpRetOptionalHeapObject = undefined;
+
+        let stringStack = [];
+        let i32Stack = [];
+        let i64Stack = [];
+        let f32Stack = [];
+        let f64Stack = [];
+        let pointerStack = [];
+
+        function decodeString(ptr, len) {
+            const bytes = new Uint8Array(wasmMemory.buffer, ptr, len);
+            return textDecoder.decode(bytes);
+        }
+
+        const unexpectedBjsCall = () => {
+            throw new Error("Unexpected call to BridgeJS function");
+        };
+
+        const bjs = {
+            swift_js_return_string: (ptr, len) => { tmpRetString = decodeString(ptr, len); },
+            swift_js_init_memory: (sourceId, bytesPtr) => {
+                const source = swift.memory.getObject(sourceId);
+                swift.memory.release(sourceId);
+                const bytes = new Uint8Array(wasmMemory.buffer, bytesPtr);
+                bytes.set(source);
+            },
+            swift_js_make_js_string: (ptr, len) => swift.memory.retain(decodeString(ptr, len)),
+            swift_js_init_memory_with_result: (ptr, len) => {
+                const target = new Uint8Array(wasmMemory.buffer, ptr, len);
+                target.set(tmpRetBytes);
+                tmpRetBytes = undefined;
+            },
+            swift_js_throw: (id) => { tmpRetException = swift.memory.retainByRef(id); },
+            swift_js_retain: (id) => swift.memory.retainByRef(id),
+            swift_js_release: (id) => swift.memory.release(id),
+            swift_js_push_i32: (v) => { i32Stack.push(v | 0); },
+            swift_js_push_i64: (v) => { i64Stack.push(v); },
+            swift_js_push_f32: (v) => { f32Stack.push(Math.fround(v)); },
+            swift_js_push_f64: (v) => { f64Stack.push(v); },
+            swift_js_push_string: (ptr, len) => { stringStack.push(decodeString(ptr, len)); },
+            swift_js_push_pointer: (pointer) => { pointerStack.push(pointer); },
+            swift_js_push_typed_array: unexpectedBjsCall,
+            swift_js_pop_i32: () => i32Stack.pop(),
+            swift_js_pop_i64: () => i64Stack.pop(),
+            swift_js_pop_f32: () => f32Stack.pop(),
+            swift_js_pop_f64: () => f64Stack.pop(),
+            swift_js_pop_pointer: () => pointerStack.pop(),
+            swift_js_return_optional_bool: (isSome, value) => {
+                tmpRetOptionalBool = isSome === 0 ? null : value !== 0;
+            },
+            swift_js_return_optional_int: (isSome, value) => {
+                tmpRetOptionalInt = isSome === 0 ? null : value | 0;
+            },
+            swift_js_get_optional_int_presence: () => (tmpRetOptionalInt != null ? 1 : 0),
+            swift_js_get_optional_int_value: () => {
+                const v = tmpRetOptionalInt; tmpRetOptionalInt = undefined; return v;
+            },
+            swift_js_return_optional_float: (isSome, value) => {
+                tmpRetOptionalFloat = isSome === 0 ? null : Math.fround(value);
+            },
+            swift_js_get_optional_float_presence: () => (tmpRetOptionalFloat != null ? 1 : 0),
+            swift_js_get_optional_float_value: () => {
+                const v = tmpRetOptionalFloat; tmpRetOptionalFloat = undefined; return v;
+            },
+            swift_js_return_optional_double: (isSome, value) => {
+                tmpRetOptionalDouble = isSome === 0 ? null : value;
+            },
+            swift_js_get_optional_double_presence: () => (tmpRetOptionalDouble != null ? 1 : 0),
+            swift_js_get_optional_double_value: () => {
+                const v = tmpRetOptionalDouble; tmpRetOptionalDouble = undefined; return v;
+            },
+            swift_js_return_optional_string: (isSome, ptr, len) => {
+                tmpRetString = isSome === 0 ? null : decodeString(ptr, len);
+            },
+            swift_js_get_optional_string: () => {
+                const str = tmpRetString;
+                tmpRetString = undefined;
+                if (str == null) return -1;
+                const bytes = textEncoder.encode(str);
+                tmpRetBytes = bytes;
+                return bytes.length;
+            },
+            swift_js_return_optional_object: (isSome, objectId) => {
+                tmpRetString = isSome === 0 ? null : swift.memory.getObject(objectId);
+            },
+            swift_js_return_optional_heap_object: (isSome, pointer) => {
+                tmpRetOptionalHeapObject = isSome === 0 ? null : pointer;
+            },
+            swift_js_get_optional_heap_object_pointer: () => {
+                const pointer = tmpRetOptionalHeapObject;
+                tmpRetOptionalHeapObject = undefined;
+                return pointer || 0;
+            },
+            swift_js_make_promise: unexpectedBjsCall,
+            swift_js_closure_unregister: (_funcRef) => {},
+        };
+
+        const importObject = {
+            wasi_snapshot_preview1: wasi.wasiImport,
+            javascript_kit: swift.wasmImports,
+            bjs: bjs,
+        };
+
+        setStatus("Instantiating WASM…");
+        const { instance } = await WebAssembly.instantiate(wasmBytes, importObject);
+        wasmMemory = instance.exports.memory;
+        swift.setInstance(instance);
+        wasi.initialize(instance);
+
+        const canvas = document.getElementById("canvas");
+        const dpr = window.devicePixelRatio || 1;
+        const sz = canvas.getBoundingClientRect();
+        canvas.width  = Math.max(1, Math.floor(sz.width  * dpr));
+        canvas.height = Math.max(1, Math.floor(sz.height * dpr));
+
+        setStatus("Starting Swift setup…");
+        if (instance.exports.setup) instance.exports.setup();
+
+        const startedAt = performance.now();
+        const harnessReady = await new Promise((resolve) => {
+            const tick = () => {
+                if (window.__megaman_boss_preview && window.__megaman_boss_preview.listAttacks) {
+                    resolve(true);
+                } else if (performance.now() - startedAt > 15000) {
+                    resolve(false);
+                } else {
+                    setTimeout(tick, 100);
+                }
+            };
+            tick();
+        });
+        if (!harnessReady) {
+            showError("Timed out waiting for window.__megaman_boss_preview. Check console for Swift errors.");
+            return;
+        }
+
+        const attackKinds = window.__megaman_boss_preview.listAttacks();
+        buildAttackList(attackKinds);
+        installControls();
+        installCanvasClick();
+        startInfoPump();
+
+        setStatus("Running");
+    } catch (err) {
+        showError(err.message || String(err));
+        console.error(err);
+    }
+}
+
+function buildAttackList(kinds) {
+    attackListEl.innerHTML = "";
+    for (const k of kinds) {
+        const btn = document.createElement("button");
+        btn.dataset.attack = k;
+        btn.textContent = k;
+        btn.addEventListener("click", () => selectAttack(k));
+        attackListEl.appendChild(btn);
+    }
+}
+
+function selectAttack(kind) {
+    for (const b of attackListEl.querySelectorAll("button")) {
+        b.classList.toggle("active", b.dataset.attack === kind);
+    }
+    state.activeAttack = kind;
+    window.__megaman_boss_preview.setActiveAttack(kind);
+}
+
+function installControls() {
+    document.getElementById("btnStop").addEventListener("click", () => {
+        window.__megaman_boss_preview.stop();
+        for (const b of attackListEl.querySelectorAll("button.active")) {
+            b.classList.remove("active");
+        }
+        state.activeAttack = null;
+    });
+    document.getElementById("btnPause").addEventListener("click", () => {
+        const info = window.__megaman_boss_preview.getInfo();
+        const next = !(info && info.paused);
+        window.__megaman_boss_preview.setPaused(next);
+    });
+
+    for (const b of document.querySelectorAll("[data-player-preset]")) {
+        b.addEventListener("click", () => {
+            const preset = b.dataset.playerPreset;
+            const x = preset === "left"   ? STAGE_WIDTH * 0.20
+                    : preset === "right"  ? STAGE_WIDTH * 0.80
+                    :                       STAGE_WIDTH * 0.50;
+            window.__megaman_boss_preview.setPlayerX(x);
+        });
+    }
+
+    for (const b of document.querySelectorAll("[data-boss-facing]")) {
+        b.addEventListener("click", () => {
+            window.__megaman_boss_preview.setBossFacing(b.dataset.bossFacing);
+        });
+    }
+}
+
+function installCanvasClick() {
+    const canvas = document.getElementById("canvas");
+    canvas.addEventListener("click", (ev) => {
+        // Map CSS-space click to game-space x. The canvas is aspect-fitted
+        // to the stage container via CSS; convert via the bounding rect.
+        const rect = canvas.getBoundingClientRect();
+        const localX = ev.clientX - rect.left;
+        const stageX = (localX / rect.width) * STAGE_WIDTH;
+        window.__megaman_boss_preview.setPlayerX(stageX);
+    });
+}
+
+function startInfoPump() {
+    function pump() {
+        const info = window.__megaman_boss_preview.getInfo();
+        if (info) {
+            // Rebuild stage timeline when the active attack's stage list
+            // changes (i.e. switching from LanceThrow to GroundCombo or to
+            // a non-Previewable attack with empty stageNames).
+            const names = info.stageNames || [];
+            const namesKey = names.join("|");
+            if (state.stageNamesKey !== namesKey) {
+                state.stageNamesKey = namesKey;
+                state.stageNames = names;
+                stageRowEl.innerHTML = "";
+                if (names.length === 0) {
+                    const span = document.createElement("span");
+                    span.className = "help";
+                    span.textContent = state.activeAttack
+                        ? "(no stage instrumentation for this attack)"
+                        : "Pick an attack to see its stages.";
+                    stageRowEl.appendChild(span);
+                } else {
+                    for (const n of names) {
+                        const span = document.createElement("span");
+                        span.dataset.stage = n;
+                        span.textContent = n;
+                        stageRowEl.appendChild(span);
+                    }
+                }
+            }
+            for (const span of stageRowEl.querySelectorAll("span[data-stage]")) {
+                span.classList.toggle("active", span.dataset.stage === info.stage);
+            }
+            iAttack.textContent    = info.activeAttack;
+            iStage.textContent     = info.stage || "(none)";
+            iBossPos.textContent   = `(${info.bossX.toFixed(1)}, ${info.bossY.toFixed(1)})`;
+            iPlayerPos.textContent = `(${info.playerX.toFixed(1)}, ${info.playerY.toFixed(1)})`;
+            iPaused.textContent    = info.paused ? "yes" : "no";
+            iFrame.textContent     = info.frameCount.toFixed(0);
+        }
+        requestAnimationFrame(pump);
+    }
+    requestAnimationFrame(pump);
+}
+
+main();
+</script>
+</body>
+</html>

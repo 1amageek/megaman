@@ -192,3 +192,38 @@ final class AirCombo: Attack {
         didSpawnStageProjectile = false
     }
 }
+
+// MARK: - AttackPreviewable
+extension AirCombo: AttackPreviewable {
+    static let previewStageNames: [String] = [
+        "prepare",
+        "rising1",
+        "firstSlash",
+        "firstProjectile",
+        "hold1",
+        "secondSlash",
+        "secondProjectile",
+        "divePrepare",
+        "dive",
+        "diving",
+        "landed",
+        "done",
+    ]
+
+    var previewStageIndex: Int {
+        switch stage {
+        case .prepare:          return 0
+        case .rising1:          return 1
+        case .firstSlash:       return 2
+        case .firstProjectile:  return 3
+        case .hold1:            return 4
+        case .secondSlash:      return 5
+        case .secondProjectile: return 6
+        case .divePrepare:      return 7
+        case .dive:             return 8
+        case .diving:           return 9
+        case .landed:           return 10
+        case .done:             return 11
+        }
+    }
+}

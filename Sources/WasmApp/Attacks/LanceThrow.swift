@@ -348,3 +348,30 @@ final class LanceThrow: Attack {
         laser = nil
     }
 }
+
+// MARK: - AttackPreviewable
+extension LanceThrow: AttackPreviewable {
+    static let previewStageNames: [String] = [
+        "stage0_jumpPrepare",
+        "stage1_lockWindow",
+        "stage2_throwWindow",
+        "stage3_spawn",
+        "stage4_repeatPrepare",
+        "stage5_landWait",
+        "stage6_landRecover",
+        "done",
+    ]
+
+    var previewStageIndex: Int {
+        switch stage {
+        case .stage0_jumpPrepare:    return 0
+        case .stage1_lockWindow:     return 1
+        case .stage2_throwWindow:    return 2
+        case .stage3_spawn:          return 3
+        case .stage4_repeatPrepare:  return 4
+        case .stage5_landWait:       return 5
+        case .stage6_landRecover:    return 6
+        case .done:                  return 7
+        }
+    }
+}

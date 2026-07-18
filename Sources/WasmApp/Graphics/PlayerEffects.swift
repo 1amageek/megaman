@@ -25,8 +25,13 @@ enum PlayerEffects {
         container.zPosition = 45
 
         if let anim = EffectAtlases.animation(.smoke), let first = anim.textures.first {
-            let scale = spread / 10.0
-            let sprite = SKSpriteNode(texture: first, size: CGSize(width: 16 * scale, height: 16 * scale))
+            // Render at native 16×16 — Godot GPUParticles2D for the dash /
+            // wall-slide smoke uses scale=1 with a 48×48 / 3×3 sheet
+            // (mat_smokeparticle.tres). Earlier code multiplied size by
+            // spread/10, producing a 22×22 puff that swallowed the lower
+            // half of the player's body in the screenshots; positioning is
+            // controlled at the spawn site instead.
+            let sprite = SKSpriteNode(texture: first, size: CGSize(width: 16, height: 16))
             sprite.colorBlendFactor = 0
             let play = SKAction.animate(with: anim.textures, timePerFrame: anim.timePerFrame)
             sprite.run(SKAction.sequence([play, .removeFromParent()]))
@@ -49,28 +54,6 @@ enum PlayerEffects {
         }
         container.run(SKAction.sequence([.wait(forDuration: 0.4), .removeFromParent()]))
         return container
-    }
-
-    // MARK: - Ghost sprite (dash trail)
-    // Snapshot of the current player texture, fading out in place. Mirrors
-    // Godot Dash.gd `duringImage` ghost-sprite effect.
-    static func ghost(texture: SKTexture?,
-                      size: CGSize,
-                      at point: CGPoint,
-                      facingSign: CGFloat,
-                      yOffset: CGFloat) -> SKNode? {
-        guard let texture else { return nil }
-        let ghost = SKSpriteNode(texture: texture, size: size)
-        ghost.anchorPoint = CGPoint(x: 0.5, y: 0)
-        ghost.position = CGPoint(x: point.x, y: point.y + yOffset)
-        ghost.xScale = facingSign
-        ghost.alpha = 0.55
-        ghost.colorBlendFactor = 0.7
-        ghost.color = SKColor(red: 0.35, green: 0.8, blue: 1.0, alpha: 1.0)
-        ghost.zPosition = 48
-        let fade = SKAction.fadeOut(withDuration: 0.22)
-        ghost.run(SKAction.sequence([fade, .removeFromParent()]))
-        return ghost
     }
 
     // MARK: - Charge halo (parented to player)
@@ -364,17 +347,24 @@ enum PlayerEffects {
         return container
     }
 
-    // MARK: - Air-dash puff
-    // Plays Godot `airdash.png` (3x2 sheet, AirDash.gd kick-off) once under
-    // the character. Falls back to a compact compound puff during the pre-load
-    // window.
-    static func airJumpPuff(at point: CGPoint) -> SKNode {
+    // MARK: - Dash streak overlay
+    // Plays the Godot `dash.png` / `airdash.png` Sprite2D once at the spawn
+    // point, optionally horizontally mirrored. Source: Godot Dash.gd's
+    // `emit_dash_particle()` (called from Dash._Update via the `emitted_dash`
+    // single-shot flag) which calls `SpriteEffect.emit_effect(scale_x)` —
+    // duplicates the prefab Sprite2D, mirrors via `_particle.scale.x =
+    // scale_x`, and lets the SpriteEffect run its `animation_speed = 24`
+    // one-shot through the 3×2 sheet. AirDash inherits the same call path
+    // (only the inherited `emit_particles()` smoke is overridden out, not
+    // emit_dash_particle). Both atlases are 96×64 → 32×32 per frame.
+    static func dashStreak(kind: EffectAtlases.Kind, at point: CGPoint, mirrored: Bool) -> SKNode {
         let container = SKNode()
         container.position = point
         container.zPosition = 45
 
-        if let anim = EffectAtlases.animation(.airdash), let first = anim.textures.first {
+        if let anim = EffectAtlases.animation(kind), let first = anim.textures.first {
             let sprite = SKSpriteNode(texture: first, size: CGSize(width: 32, height: 32))
+            sprite.xScale = mirrored ? -1 : 1
             let play = SKAction.animate(with: anim.textures, timePerFrame: anim.timePerFrame)
             sprite.run(SKAction.sequence([play, .removeFromParent()]))
             container.addChild(sprite)

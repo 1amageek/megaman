@@ -1,0 +1,815 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>Player Preview — WASM (OpenSpriteKit)</title>
+<style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body {
+        background: #1a1a1a; color: #ddd;
+        font: 13px/1.4 -apple-system, BlinkMacSystemFont, "Hiragino Sans", sans-serif;
+    }
+    body { padding: 16px; }
+    h1 { font-size: 14px; margin: 0 0 12px 0; color: #4af; }
+    .layout { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 16px; align-items: start; }
+    .stage {
+        background: repeating-conic-gradient(#222 0% 25%, #2a2a2a 0% 50%) 50% 50% / 16px 16px;
+        border: 1px solid #333;
+        position: relative;
+        aspect-ratio: 4 / 3;
+        overflow: hidden;
+        display: flex; align-items: center; justify-content: center;
+    }
+    canvas#canvas {
+        image-rendering: pixelated; image-rendering: crisp-edges;
+        width: 100%; height: 100%; display: block;
+    }
+    .panel { background: #222; border: 1px solid #333; padding: 10px; margin-bottom: 12px; }
+    .panel h2 { font-size: 12px; margin: 0 0 8px 0; color: #888; text-transform: uppercase; letter-spacing: .04em; }
+    .controls { display: flex; gap: 6px; margin: 4px 0; flex-wrap: wrap; }
+    .controls button, .controls label {
+        font: 11px/1 ui-monospace, Menlo, monospace;
+        background: #2a2a2a; color: #ccc; border: 1px solid #444;
+        padding: 6px 10px; cursor: pointer;
+    }
+    .controls button:hover { background: #333; border-color: #4af; }
+
+    .actions { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 4px; }
+    .actions button {
+        font: 11px/1.25 ui-monospace, Menlo, monospace;
+        background: #2a2a2a; color: #ccc; border: 1px solid #444;
+        padding: 6px 8px; cursor: pointer; text-align: left;
+        display: flex; flex-direction: column; gap: 4px;
+    }
+    .actions button:hover { background: #333; border-color: #4af; }
+    .actions button.active { background: #4af; color: #111; border-color: #4af; }
+    .actions button.disabled { opacity: 0.45; cursor: not-allowed; }
+    .actions button.disabled:hover { background: #2a2a2a; border-color: #444; }
+    .actions button .seq { font-size: 10px; color: #888; letter-spacing: .02em; }
+    .actions button.active .seq { color: #103a5e; }
+    .actions button .step-cur {
+        font-size: 9px; padding: 1px 4px; border-radius: 2px;
+        background: #1e3d4d; color: #6fdbff; align-self: flex-start;
+    }
+    .actions button.active .step-cur { background: #103a5e; color: #cdeeff; }
+    .actions button .step-cur.hidden { display: none; }
+
+    .tags { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 4px; }
+    .tags-section { margin-top: 16px; }
+    .tags button {
+        font: 11px/1 ui-monospace, Menlo, monospace;
+        background: #2a2a2a; color: #ccc; border: 1px solid #444;
+        padding: 5px 6px; cursor: pointer; text-align: left;
+        display: flex; flex-direction: column; gap: 3px; line-height: 1.25;
+    }
+    .tags button:hover { background: #333; border-color: #4af; }
+    .tags button.active { background: #4af; color: #111; border-color: #4af; }
+    .tags button.disabled { opacity: 0.45; cursor: not-allowed; }
+    .tags button .badge {
+        display: inline-block; font-size: 9px; line-height: 1; padding: 2px 4px;
+        border-radius: 2px; align-self: flex-start; letter-spacing: .03em;
+    }
+    .tags button.use-ported    .badge { background: #1e4d2b; color: #6fdb8a; }
+    .tags button.use-bike      .badge { background: #2a3d5d; color: #82b8ff; }
+    .tags button.use-stage     .badge { background: #4d1e1e; color: #ff8a8a; }
+    .tags button.use-unused    .badge { background: #333; color: #888; }
+    .tags button.active .badge { filter: brightness(1.4) saturate(0.8); }
+
+    .legend { display: flex; gap: 12px; margin: 6px 0 10px 0; font-size: 11px; flex-wrap: wrap; }
+    .legend span { display: inline-flex; align-items: center; gap: 4px; }
+    .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; }
+
+    .info { font-family: ui-monospace, Menlo, monospace; font-size: 11px; color: #999; line-height: 1.7; }
+    .info span { color: #fff; }
+    .err { color: #f55; font-family: ui-monospace, monospace; padding: 8px; background: #2a1010; border: 1px solid #511; margin-bottom: 12px; }
+    .status { font-family: ui-monospace, monospace; font-size: 11px; color: #69db7c; padding: 4px 8px; background: #102218; border: 1px solid #1e4d2b; display: inline-block; }
+    .help { font-size: 11px; color: #777; margin-top: 6px; }
+</style>
+</head>
+<body>
+<h1>Player Preview — WASM (OpenSpriteKit)</h1>
+<div id="error" class="err" hidden></div>
+<div id="bootStatus" class="status">Initializing…</div>
+<div class="layout" style="margin-top: 12px;">
+    <div class="stage">
+        <canvas id="canvas" width="384" height="256"></canvas>
+    </div>
+    <div>
+        <div class="panel">
+            <h2>Controls</h2>
+            <div class="controls">
+                <button id="btnPause">⏯ Pause</button>
+                <button id="btnRestart">↻ Restart</button>
+                <button id="btnFlip">↔ Flip</button>
+            </div>
+            <div class="info">
+                action (chain step): <span id="iAction">—</span><br>
+                Swift action:        <span id="iSwiftAction">—</span><br>
+                tag:                 <span id="iTag">—</span><br>
+                facing:              <span id="iFacing">—</span><br>
+                paused:              <span id="iPaused">—</span><br>
+                step elapsed:        <span id="iStepMs">—</span> ms<br>
+                atlas frame:         <span id="iAtlasFrame">—</span><br>
+                Swift frame#:        <span id="iFrame">—</span>
+            </div>
+            <div class="help">Click a compound action below to play its full chain. Each step is forwarded to Swift via <code>__megaman_preview.setAction</code>; transitions are timed from the atlas JSON. Disabled buttons are tags Swift hasn't ported yet (e.g. Ride Chaser bike loop).</div>
+        </div>
+    </div>
+</div>
+
+<div class="panel tags-section">
+    <h2>Actions (compound sequences from Godot)</h2>
+    <div class="help" style="margin:0 0 8px 0">
+        Each action plays a chain of tags as a single Godot ability would (e.g. spawn → beam → beam_in → beam_armor → idle). Click to play; the loop holds at the final repeating step.
+    </div>
+    <div id="actionList" class="actions">
+        <span class="help">Loading WASM…</span>
+    </div>
+</div>
+
+<div class="panel tags-section">
+    <h2>All Tags (click to drive a single Player.Action)</h2>
+    <div class="legend">
+        <span><i style="background:#6fdb8a"></i> Ported (Player.swift)</span>
+        <span><i style="background:#82b8ff"></i> Ride Chaser (bike)</span>
+        <span><i style="background:#ff8a8a"></i> Stage object</span>
+        <span><i style="background:#888"></i> Unused</span>
+    </div>
+    <div id="tagList" class="tags"></div>
+</div>
+
+<script type="module">
+// Force ?preview=player so main.swift's performSetup branches into
+// performPreviewSetup. location.replace keeps history clean.
+if (!location.search.includes("preview=player")) {
+    const q = location.search ? location.search + "&preview=player" : "?preview=player";
+    location.replace(location.pathname + q + location.hash);
+    throw new Error("redirecting to add ?preview=player");
+}
+
+// The wasmport Vapor server serves runtime.mjs / WasmApp.wasm under /wasm/,
+// while the E2E test server (tests/e2e/server.mjs) mounts the same directory
+// at /. Probe both.
+async function resolveWasmBase() {
+    const head = async (url) => {
+        try { const r = await fetch(url, { method: "HEAD" }); return r.ok; }
+        catch { return false; }
+    };
+    if (await head("/wasm/runtime.mjs")) return "/wasm";
+    if (await head("/runtime.mjs")) return "";
+    throw new Error("Cannot locate runtime.mjs at /wasm/ or /. Is the dev server running?");
+}
+const WASM_BASE = await resolveWasmBase();
+const { SwiftRuntime } = await import(WASM_BASE + "/runtime.mjs");
+const { WASI, File, OpenFile, ConsoleStdout } = await import("https://cdn.jsdelivr.net/npm/@bjorn3/browser_wasi_shim@0.4.1/+esm");
+
+const ATLAS_JSON = "/assets/sprites/player/x.json";
+
+const statusEl = document.getElementById("bootStatus");
+const errorEl  = document.getElementById("error");
+const actionListEl = document.getElementById("actionList");
+const tagListEl    = document.getElementById("tagList");
+const iAction = document.getElementById("iAction");
+const iSwiftAction = document.getElementById("iSwiftAction");
+const iTag    = document.getElementById("iTag");
+const iFacing = document.getElementById("iFacing");
+const iPaused = document.getElementById("iPaused");
+const iAtlasFrame = document.getElementById("iAtlasFrame");
+const iFrame  = document.getElementById("iFrame");
+const iStepMs = document.getElementById("iStepMs");
+
+function setStatus(msg) {
+    statusEl.textContent = msg;
+    console.log("[preview]", msg);
+}
+function showError(msg) {
+    errorEl.hidden = false;
+    errorEl.textContent = msg;
+    statusEl.style.color = "#ff6b6b";
+    statusEl.textContent = "Error";
+    console.error("[preview]", msg);
+}
+
+// ----- Tag → Player.Action mapping -----------------------------------------
+// Player.Action enum spells tag names in camelCase (`beam_in` → `beamIn`),
+// with a few rebrandings. Tags with no Swift counterpart return null and the
+// corresponding button is rendered disabled.
+const ACTION_OVERRIDES = {
+    "weak":     "idleWeak",
+    "stop":     "rideStop",
+    "stop_end": "rideStopEnd",
+    // Aseprite glues these without an underscore but Player.swift uses
+    // camelCase, so the snake_case → camelCase regex below misses them.
+    "airdash":  "airDash",
+    "walljump": "wallJump",
+};
+function tagToActionName(tag) {
+    if (ACTION_OVERRIDES[tag]) return ACTION_OVERRIDES[tag];
+    return tag.replace(/_(\w)/g, (_, c) => c.toUpperCase());
+}
+
+// ----- Tag classification (verbatim from the JS-only previous version) ----
+const TAG_USAGE = {
+    "idle":         { kind: "ported",    note: "Player.swift .idle / Idle.gd" },
+    "walk_start":   { kind: "ported",    note: "Player.swift .walkStart / Walk.gd ramp" },
+    "walk":         { kind: "ported",    note: "Player.swift .walk / Walk.gd" },
+    "jump":         { kind: "ported",    note: "Player.swift .jump / Jump.gd" },
+    "fall":         { kind: "ported",    note: "Player.swift .fall / Fall.gd" },
+    "dash":         { kind: "ported",    note: "Player.swift .dash / Dash.gd" },
+    "airdash":      { kind: "unused",    note: "Upward pose — no Godot script references this tag; X8 AirDash uses 'dash' (Player.tscn:874)" },
+    "slide":        { kind: "ported",    note: "Player.swift .slide / WallSlide" },
+    "walljump":     { kind: "ported",    note: "Player.swift .wallJump / Walljump.gd" },
+    "damage":       { kind: "ported",    note: "Player.swift .hurt / Damage.gd" },
+    "victory":      { kind: "ported",    note: "Player.swift .victory" },
+    "shot":         { kind: "ported",    note: "Player.swift shot pose / Weapon.gd" },
+    "shot_strong":  { kind: "ported",    note: "Player.swift shot pose (charged)" },
+    "beam":         { kind: "ported",    note: "Player.swift .beamIn phase 1 / Modules/Intro.gd" },
+    "beam_in":      { kind: "ported",    note: "Player.swift .beamIn phase 2 / Modules/Intro.gd" },
+    "beam_armor":   { kind: "ported",    note: "Player.swift .beamIn phase 3 (beam_equip)" },
+    "weak":         { kind: "ported",    note: "Player.swift updateVisual isLowHealth / IdleWeak.gd" },
+    "recover":      { kind: "ported",    note: "Player.swift recoverTimer / Idle/Walk play_animation" },
+    "talk":         { kind: "ported",    note: "Player.swift .talk / playTalkPose / endTalkPose" },
+    "armor_receive":{ kind: "ported",    note: "Player.swift .armorReceive / playArmorReceive" },
+    "armor_blink":  { kind: "ported",    note: "Player.swift .armorBlink / auto from armorReceive" },
+    "shot_recover": { kind: "ported",    note: "Player.swift recover branch (recoverIsShooting)" },
+    "damage_resist":{ kind: "ported",    note: "Player.swift .damageResist (test harness trigger)" },
+    "stop":         { kind: "ported",    note: "Player.swift .rideStop / playRideStop" },
+    "stop_end":     { kind: "ported",    note: "Player.swift .rideStopEnd / playRideStopEnd" },
+    "ride":         { kind: "bike",      note: "Ride Chaser mount (Character.gd)" },
+    "boost_start":  { kind: "bike",      note: "Ride boost start (BikeDash.gd)" },
+    "boost":        { kind: "bike",      note: "Ride boost loop" },
+    "boost_end":    { kind: "bike",      note: "Ride boost end" },
+    "wheelie":      { kind: "bike",      note: "Ride wheelie (Accelerate.gd)" },
+    "wheelie_end":  { kind: "bike",      note: "Ride wheelie end" },
+    "break_end":    { kind: "bike",      note: "Ride break end (Accelerate.gd)" },
+    "turn":         { kind: "bike",      note: "Ride turn — also BikeReploid/Turn.gd" },
+    "break":        { kind: "stage",     note: "DestructibleSpike.tscn (also Ride break)" },
+    "crouch":       { kind: "ported",    note: "Player.swift .crouch / playCrouch / endCrouch" },
+    "crouch_talk":  { kind: "ported",    note: "Player.swift .crouchTalk / playCrouchTalk / endCrouchTalk" },
+    "balance":      { kind: "ported",    note: "Player.swift .balance / playBalance / endBalance" },
+    "counter":      { kind: "ported",    note: "Player.swift .counter / playCounter (auto-return)" },
+    "punch_down":   { kind: "ported",    note: "Player.swift .punchDown / playPunchDown (auto-return)" },
+    "shot_right":   { kind: "ported",    note: "Player.swift .aimShotRight / playAimShot(.right)" },
+    "shot_left":    { kind: "ported",    note: "Player.swift .aimShotLeft / playAimShot(.left)" },
+    "shot_up":      { kind: "ported",    note: "Player.swift .aimShotUp / playAimShot(.up)" },
+    "stairs_start": { kind: "ported",    note: "Player.swift .stairsStart / playStairsStart" },
+    "stairs":       { kind: "ported",    note: "Player.swift .stairs / playStairs (loop)" },
+    "stairs_end":   { kind: "ported",    note: "Player.swift .stairsEnd / endStairs (auto-return)" },
+};
+const KIND_LABEL = { ported: "PORTED", bike: "BIKE", stage: "STAGE", unused: "UNUSED" };
+
+// Per-tag loop flag (mirrors Player.swift `repeating:` arguments).
+const TAG_LOOP = {
+    "idle": true, "weak": true, "walk": true, "talk": true,
+    "crouch_talk": true, "balance": true, "stairs": true,
+    "ride": true, "boost": true, "wheelie": true, "stop": true,
+    "beam":          false, "beam_in":       false, "beam_armor":    false,
+    "armor_receive": false, "armor_blink":   false, "walk_start":    false,
+    "jump":          false, "fall":          false, "dash":          false,
+    "airdash":       false, "slide":         false, "walljump":      false,
+    "shot":          false, "shot_strong":   false, "shot_recover":  false,
+    "shot_right":    false, "shot_left":     false, "shot_up":       false,
+    "recover":       false, "damage":        false, "damage_resist": false,
+    "victory":       false, "crouch":        false, "counter":       false,
+    "punch_down":    false, "stairs_start":  false, "stairs_end":    false,
+    "turn":          false, "stop_end":      false, "boost_start":   false,
+    "boost_end":     false, "wheelie_end":   false, "break":         false,
+    "break_end":     false,
+};
+
+// Compound actions extracted from Godot ability scripts. Same conventions as
+// the previous JS-only version (`repeat: true` = terminal step; `holdMs` =
+// override duration).
+const ACTIONS = [
+    { id: "spawn",         name: "Spawn (intro)",
+      note: "Modules/Intro.gd: beam → beam_in → beam_armor → idle",
+      steps: [{tag:"beam"},{tag:"beam_in"},{tag:"beam_armor"},{tag:"idle",repeat:true}] },
+    { id: "idle",          name: "Idle",
+      note: "Idle.gd (looping rest pose)",
+      steps: [{tag:"idle",repeat:true}] },
+    { id: "idle_weak",     name: "Idle (low HP)",
+      note: "IdleWeak.gd / Actor.is_low_health()",
+      steps: [{tag:"weak",repeat:true}] },
+
+    { id: "walk",          name: "Walk",
+      note: "Walk.gd: walk_start ramp → walk loop",
+      steps: [{tag:"walk_start"},{tag:"walk",repeat:true}] },
+    { id: "jump",          name: "Jump → Fall",
+      note: "Jump.gd → Movement.change_animation_if_falling",
+      steps: [{tag:"jump"},{tag:"fall",repeat:true}] },
+    { id: "fall",          name: "Fall",
+      note: "Fall.gd",
+      steps: [{tag:"fall",repeat:true}] },
+    { id: "dash",          name: "Dash (held)",
+      note: "Dash.gd — looping while held",
+      steps: [{tag:"dash",repeat:true}] },
+    { id: "airdash",       name: "Air Dash",
+      note: "AirDash.gd — Player.tscn:874 sets animation = 'dash' (frames 88-91, horizontal pose)",
+      steps: [{tag:"dash"},{tag:"fall",repeat:true}] },
+    { id: "wallslide",     name: "Wall Slide",
+      note: "Wallslide.gd",
+      steps: [{tag:"slide",repeat:true}] },
+    { id: "walljump",      name: "Wall Jump → Fall",
+      note: "Walljump.gd",
+      steps: [{tag:"walljump"},{tag:"fall",repeat:true}] },
+
+    { id: "shot",          name: "Lemon Shot",
+      note: "Shot.gd: shot pose → recover → idle",
+      steps: [{tag:"shot",holdMs:120},{tag:"recover"},{tag:"idle",repeat:true}] },
+    { id: "charged_shot",  name: "Charged Shot",
+      note: "Shot.gd shot_strong → shot_recover when held",
+      steps: [{tag:"shot_strong",holdMs:180},{tag:"shot_recover"},{tag:"idle",repeat:true}] },
+    { id: "aimed_shot_up",    name: "Aimed Shot ↑",
+      note: "Atlas shot_up — future-stage aim",
+      steps: [{tag:"shot_up"},{tag:"idle",repeat:true}] },
+    { id: "aimed_shot_right", name: "Aimed Shot →",
+      note: "Atlas shot_right — future-stage aim",
+      steps: [{tag:"shot_right"},{tag:"idle",repeat:true}] },
+    { id: "aimed_shot_left",  name: "Aimed Shot ←",
+      note: "Atlas shot_left — future-stage aim",
+      steps: [{tag:"shot_left"},{tag:"idle",repeat:true}] },
+
+    { id: "damage",        name: "Damage / Knockback",
+      note: "Damage.gd — knockback then idle",
+      steps: [{tag:"damage"},{tag:"idle",repeat:true}] },
+    { id: "damage_resist", name: "Armor Resist",
+      note: "Damage.gd:25 / FireDash.gd:142",
+      steps: [{tag:"damage_resist"},{tag:"idle",repeat:true}] },
+    { id: "death",         name: "Death pose",
+      note: "PlayerDeath.tscn — sprite holds last damage frame",
+      steps: [{tag:"damage",repeat:true}] },
+
+    { id: "victory",       name: "Stage clear",
+      note: "Modules/Finish.gd: idle → victory → beam_in → beam ascend",
+      steps: [{tag:"idle",holdMs:1500},{tag:"victory"},{tag:"beam_in"},{tag:"beam",repeat:true}] },
+    { id: "talk",          name: "Talk (NPC)",
+      note: "Talk.gd",
+      steps: [{tag:"talk",repeat:true}] },
+
+    { id: "armor_get",     name: "Armor receive",
+      note: "Capsule.gd — armor_receive → armor_blink → idle",
+      steps: [{tag:"armor_receive"},{tag:"armor_blink"},{tag:"idle",repeat:true}] },
+
+    { id: "crouch",        name: "Crouch",
+      note: "Atlas crouch — held",
+      steps: [{tag:"crouch",repeat:true}] },
+    { id: "crouch_talk",   name: "Crouch + talk",
+      note: "Atlas crouch → crouch_talk loop",
+      steps: [{tag:"crouch"},{tag:"crouch_talk",repeat:true}] },
+    { id: "balance",       name: "Edge balance",
+      note: "Atlas balance — looping",
+      steps: [{tag:"balance",repeat:true}] },
+    { id: "counter",       name: "Counter",
+      note: "Atlas counter — auto-return to idle",
+      steps: [{tag:"counter"},{tag:"idle",repeat:true}] },
+    { id: "punch_down",    name: "Punch down",
+      note: "Atlas punch_down — auto-return",
+      steps: [{tag:"punch_down"},{tag:"idle",repeat:true}] },
+    { id: "stairs_climb",  name: "Climb stairs",
+      note: "Atlas stairs_start → stairs (loop) → stairs_end → idle",
+      steps: [{tag:"stairs_start"},{tag:"stairs",holdMs:1500},{tag:"stairs_end"},{tag:"idle",repeat:true}] },
+
+    { id: "ride_mount",    name: "Bike mount",
+      note: "Modules/Ride.gd — ride pose held while mounted",
+      steps: [{tag:"ride",repeat:true}] },
+    { id: "ride_boost",    name: "Bike boost",
+      note: "BikeDash.gd: boost_start → boost (loop) → boost_end → ride",
+      steps: [{tag:"boost_start"},{tag:"boost",holdMs:1500},{tag:"boost_end"},{tag:"ride",repeat:true}] },
+    { id: "ride_wheelie",  name: "Bike wheelie",
+      note: "Accelerate.gd: wheelie → wheelie_end → ride",
+      steps: [{tag:"wheelie"},{tag:"wheelie_end"},{tag:"ride",repeat:true}] },
+    { id: "ride_break",    name: "Bike break",
+      note: "Atlas break_end → ride",
+      steps: [{tag:"break_end"},{tag:"ride",repeat:true}] },
+    { id: "ride_stop",     name: "Bike stop",
+      note: "Accelerate.gd: stop (held) → stop_end → ride",
+      steps: [{tag:"stop"},{tag:"stop_end"},{tag:"ride",repeat:true}] },
+    { id: "ride_turn",     name: "Bike turn",
+      note: "BikeReploid/Turn.gd — turn → ride",
+      steps: [{tag:"turn"},{tag:"ride",repeat:true}] },
+];
+
+// ----- WASM bootstrap ------------------------------------------------------
+const state = {
+    swiftActions: [],   // Player.Action raw values (camelCase)
+    tags: [],           // [{name, from, to}]
+    tagDurationMs: {},  // tag → total cycle duration (ms)
+    activeAction: null, // ACTIONS entry currently chained
+    activeStepIdx: 0,
+    stepStartedAt: 0,
+    stepTimer: null,
+};
+
+async function main() {
+    try {
+        setStatus("Loading WASM…");
+        const response = await fetch(WASM_BASE + "/WasmApp.wasm");
+        if (!response.ok) throw new Error("Failed to load WasmApp.wasm: " + response.status);
+        const wasmBytes = await response.arrayBuffer();
+        setStatus("WASM loaded (" + (wasmBytes.byteLength / 1024 / 1024).toFixed(1) + " MB)");
+
+        const swift = new SwiftRuntime();
+        const wasi = new WASI([], [], [
+            new OpenFile(new File([])),
+            ConsoleStdout.lineBuffered((line) => console.log("[Swift]", line)),
+            ConsoleStdout.lineBuffered((line) => console.error("[Swift]", line)),
+        ]);
+
+        let wasmMemory = null;
+        const textDecoder = new TextDecoder("utf-8");
+        const textEncoder = new TextEncoder();
+
+        let tmpRetString = undefined;
+        let tmpRetBytes = undefined;
+        let tmpRetException = undefined;
+        let tmpRetOptionalBool = undefined;
+        let tmpRetOptionalInt = undefined;
+        let tmpRetOptionalFloat = undefined;
+        let tmpRetOptionalDouble = undefined;
+        let tmpRetOptionalHeapObject = undefined;
+
+        let stringStack = [];
+        let i32Stack = [];
+        let i64Stack = [];
+        let f32Stack = [];
+        let f64Stack = [];
+        let pointerStack = [];
+
+        function decodeString(ptr, len) {
+            const bytes = new Uint8Array(wasmMemory.buffer, ptr, len);
+            return textDecoder.decode(bytes);
+        }
+
+        const unexpectedBjsCall = () => {
+            throw new Error("Unexpected call to BridgeJS function");
+        };
+
+        const bjs = {
+            swift_js_return_string: (ptr, len) => { tmpRetString = decodeString(ptr, len); },
+            swift_js_init_memory: (sourceId, bytesPtr) => {
+                const source = swift.memory.getObject(sourceId);
+                swift.memory.release(sourceId);
+                const bytes = new Uint8Array(wasmMemory.buffer, bytesPtr);
+                bytes.set(source);
+            },
+            swift_js_make_js_string: (ptr, len) => swift.memory.retain(decodeString(ptr, len)),
+            swift_js_init_memory_with_result: (ptr, len) => {
+                const target = new Uint8Array(wasmMemory.buffer, ptr, len);
+                target.set(tmpRetBytes);
+                tmpRetBytes = undefined;
+            },
+            swift_js_throw: (id) => { tmpRetException = swift.memory.retainByRef(id); },
+            swift_js_retain: (id) => swift.memory.retainByRef(id),
+            swift_js_release: (id) => swift.memory.release(id),
+            swift_js_push_i32: (v) => { i32Stack.push(v | 0); },
+            swift_js_push_i64: (v) => { i64Stack.push(v); },
+            swift_js_push_f32: (v) => { f32Stack.push(Math.fround(v)); },
+            swift_js_push_f64: (v) => { f64Stack.push(v); },
+            swift_js_push_string: (ptr, len) => { stringStack.push(decodeString(ptr, len)); },
+            swift_js_push_pointer: (pointer) => { pointerStack.push(pointer); },
+            swift_js_push_typed_array: unexpectedBjsCall,
+            swift_js_pop_i32: () => i32Stack.pop(),
+            swift_js_pop_i64: () => i64Stack.pop(),
+            swift_js_pop_f32: () => f32Stack.pop(),
+            swift_js_pop_f64: () => f64Stack.pop(),
+            swift_js_pop_pointer: () => pointerStack.pop(),
+            swift_js_return_optional_bool: (isSome, value) => {
+                tmpRetOptionalBool = isSome === 0 ? null : value !== 0;
+            },
+            swift_js_return_optional_int: (isSome, value) => {
+                tmpRetOptionalInt = isSome === 0 ? null : value | 0;
+            },
+            swift_js_get_optional_int_presence: () => (tmpRetOptionalInt != null ? 1 : 0),
+            swift_js_get_optional_int_value: () => {
+                const v = tmpRetOptionalInt; tmpRetOptionalInt = undefined; return v;
+            },
+            swift_js_return_optional_float: (isSome, value) => {
+                tmpRetOptionalFloat = isSome === 0 ? null : Math.fround(value);
+            },
+            swift_js_get_optional_float_presence: () => (tmpRetOptionalFloat != null ? 1 : 0),
+            swift_js_get_optional_float_value: () => {
+                const v = tmpRetOptionalFloat; tmpRetOptionalFloat = undefined; return v;
+            },
+            swift_js_return_optional_double: (isSome, value) => {
+                tmpRetOptionalDouble = isSome === 0 ? null : value;
+            },
+            swift_js_get_optional_double_presence: () => (tmpRetOptionalDouble != null ? 1 : 0),
+            swift_js_get_optional_double_value: () => {
+                const v = tmpRetOptionalDouble; tmpRetOptionalDouble = undefined; return v;
+            },
+            swift_js_return_optional_string: (isSome, ptr, len) => {
+                tmpRetString = isSome === 0 ? null : decodeString(ptr, len);
+            },
+            swift_js_get_optional_string: () => {
+                const str = tmpRetString;
+                tmpRetString = undefined;
+                if (str == null) return -1;
+                const bytes = textEncoder.encode(str);
+                tmpRetBytes = bytes;
+                return bytes.length;
+            },
+            swift_js_return_optional_object: (isSome, objectId) => {
+                tmpRetString = isSome === 0 ? null : swift.memory.getObject(objectId);
+            },
+            swift_js_return_optional_heap_object: (isSome, pointer) => {
+                tmpRetOptionalHeapObject = isSome === 0 ? null : pointer;
+            },
+            swift_js_get_optional_heap_object_pointer: () => {
+                const pointer = tmpRetOptionalHeapObject;
+                tmpRetOptionalHeapObject = undefined;
+                return pointer || 0;
+            },
+            swift_js_make_promise: unexpectedBjsCall,
+            swift_js_closure_unregister: (_funcRef) => {},
+        };
+
+        const importObject = {
+            wasi_snapshot_preview1: wasi.wasiImport,
+            javascript_kit: swift.wasmImports,
+            bjs: bjs,
+        };
+
+        setStatus("Instantiating WASM…");
+        const { instance } = await WebAssembly.instantiate(wasmBytes, importObject);
+        wasmMemory = instance.exports.memory;
+        swift.setInstance(instance);
+        wasi.initialize(instance);
+
+        const canvas = document.getElementById("canvas");
+        const dpr = window.devicePixelRatio || 1;
+        const sz = canvas.getBoundingClientRect();
+        canvas.width  = Math.max(1, Math.floor(sz.width  * dpr));
+        canvas.height = Math.max(1, Math.floor(sz.height * dpr));
+
+        setStatus("Starting Swift setup…");
+        if (instance.exports.setup) instance.exports.setup();
+
+        // Wait for the harness — Swift sets it asynchronously after atlas
+        // loads. 15s timeout guards against a silent setup failure.
+        const startedAt = performance.now();
+        const harnessReady = await new Promise((resolve) => {
+            const tick = () => {
+                if (window.__megaman_preview && window.__megaman_preview.listActions) {
+                    resolve(true);
+                } else if (performance.now() - startedAt > 15000) {
+                    resolve(false);
+                } else {
+                    setTimeout(tick, 100);
+                }
+            };
+            tick();
+        });
+        if (!harnessReady) {
+            showError("Timed out waiting for window.__megaman_preview. Check console for Swift errors.");
+            return;
+        }
+
+        // Snapshot the available Swift actions and load atlas JSON in parallel.
+        const swiftListRaw = window.__megaman_preview.listActions();
+        // Defensive: previous version of the harness double-wrapped the list
+        // (`[[...]]`). Unwrap if needed so the page works against older WASM.
+        state.swiftActions = (Array.isArray(swiftListRaw) && swiftListRaw.length === 1 && Array.isArray(swiftListRaw[0]))
+            ? swiftListRaw[0] : swiftListRaw;
+        const swiftActionSet = new Set(state.swiftActions);
+
+        await loadAtlasMetadata();
+
+        buildActionList(swiftActionSet);
+        buildTagList(swiftActionSet);
+        installControls();
+        startInfoPump();
+
+        setStatus("Running");
+    } catch (err) {
+        showError(err.message || String(err));
+        console.error(err);
+    }
+}
+
+async function loadAtlasMetadata() {
+    const r = await fetch(ATLAS_JSON);
+    if (!r.ok) throw new Error("Atlas JSON fetch " + r.status);
+    const data = await r.json();
+    let frames;
+    if (Array.isArray(data.frames)) {
+        frames = data.frames.map(f => ({ ...f.frame, duration: f.duration }));
+    } else {
+        frames = Object.values(data.frames).map(f => ({ ...f.frame, duration: f.duration }));
+    }
+    state.tags = data.meta.frameTags || [];
+    state.tagDurationMs = {};
+    for (const t of state.tags) {
+        let total = 0;
+        for (let i = t.from; i <= t.to; i++) total += frames[i].duration;
+        state.tagDurationMs[t.name] = total;
+    }
+}
+
+function buildActionList(swiftActionSet) {
+    actionListEl.innerHTML = "";
+    for (const a of ACTIONS) {
+        const btn = document.createElement("button");
+        btn.dataset.action = a.id;
+        btn.title = a.note;
+
+        const top = document.createElement("span");
+        top.textContent = a.name;
+        const seq = document.createElement("span");
+        seq.className = "seq";
+        seq.textContent = a.steps.map(s => {
+            if (!s.repeat) return s.tag;
+            return s.tag + (TAG_LOOP[s.tag] === true ? "↻" : "■");
+        }).join(" → ");
+        const stepCur = document.createElement("span");
+        stepCur.className = "step-cur hidden";
+        stepCur.dataset.role = "step-cur";
+
+        btn.appendChild(top);
+        btn.appendChild(seq);
+        btn.appendChild(stepCur);
+
+        // Disable if any tag in the chain has no Swift action counterpart.
+        const missing = a.steps
+            .map(s => tagToActionName(s.tag))
+            .filter(n => !swiftActionSet.has(n));
+        if (missing.length > 0) {
+            btn.classList.add("disabled");
+            btn.title = a.note + "  (missing Swift action: " + missing.join(", ") + ")";
+        } else {
+            btn.addEventListener("click", () => selectAction(a));
+        }
+        actionListEl.appendChild(btn);
+    }
+}
+
+function buildTagList(swiftActionSet) {
+    tagListEl.innerHTML = "";
+    for (const t of state.tags) {
+        const usage = TAG_USAGE[t.name] || { kind: "unused", note: "" };
+        const btn = document.createElement("button");
+        btn.dataset.tag = t.name;
+        btn.classList.add("use-" + usage.kind);
+        btn.title = usage.note;
+
+        const top = document.createElement("span");
+        const dur = state.tagDurationMs[t.name] ?? 0;
+        top.textContent = `${t.name} (${t.from}-${t.to}, ${dur}ms)`;
+        const badge = document.createElement("span");
+        badge.className = "badge";
+        badge.textContent = KIND_LABEL[usage.kind];
+
+        btn.appendChild(top);
+        btn.appendChild(badge);
+
+        const action = tagToActionName(t.name);
+        if (!swiftActionSet.has(action)) {
+            btn.classList.add("disabled");
+            btn.title = (usage.note ? usage.note + " — " : "")
+                + "no Swift action (" + action + ")";
+        } else {
+            btn.addEventListener("click", () => selectTag(t));
+        }
+        tagListEl.appendChild(btn);
+    }
+}
+
+function clearActiveButtons() {
+    for (const b of actionListEl.querySelectorAll("button.active")) {
+        b.classList.remove("active");
+        const cur = b.querySelector('[data-role="step-cur"]');
+        if (cur) { cur.textContent = ""; cur.classList.add("hidden"); }
+    }
+    for (const b of tagListEl.querySelectorAll("button.active")) {
+        b.classList.remove("active");
+    }
+}
+
+function cancelChain() {
+    if (state.stepTimer) {
+        clearTimeout(state.stepTimer);
+        state.stepTimer = null;
+    }
+    state.activeAction = null;
+    state.activeStepIdx = 0;
+}
+
+function selectTag(tag) {
+    cancelChain();
+    clearActiveButtons();
+    const btn = tagListEl.querySelector(`button[data-tag="${cssEscape(tag.name)}"]`);
+    if (btn) btn.classList.add("active");
+    callSwiftAction(tag.name);
+}
+
+function selectAction(action) {
+    cancelChain();
+    clearActiveButtons();
+    const btn = actionListEl.querySelector(`button[data-action="${cssEscape(action.id)}"]`);
+    if (btn) btn.classList.add("active");
+    state.activeAction = action;
+    state.activeStepIdx = 0;
+    runChainStep();
+}
+
+function runChainStep() {
+    if (!state.activeAction) return;
+    const idx = state.activeStepIdx;
+    const step = state.activeAction.steps[idx];
+    if (!step) return;
+    state.stepStartedAt = performance.now();
+
+    const btn = actionListEl.querySelector(`button[data-action="${cssEscape(state.activeAction.id)}"]`);
+    if (btn) {
+        const cur = btn.querySelector('[data-role="step-cur"]');
+        if (cur) {
+            cur.textContent = `step ${idx + 1}/${state.activeAction.steps.length} · ${step.tag}`;
+            cur.classList.remove("hidden");
+        }
+    }
+
+    callSwiftAction(step.tag);
+
+    if (step.repeat) return; // terminal — no more transitions
+
+    const tagDur = state.tagDurationMs[step.tag] ?? 200;
+    const wait = step.holdMs != null ? step.holdMs : tagDur;
+    state.stepTimer = setTimeout(() => {
+        state.stepTimer = null;
+        if (!state.activeAction) return;
+        if (state.activeStepIdx + 1 < state.activeAction.steps.length) {
+            state.activeStepIdx++;
+            runChainStep();
+        } else {
+            // Out of steps without a terminal — treat last step as terminal.
+        }
+    }, wait);
+}
+
+function callSwiftAction(tag) {
+    const actionName = tagToActionName(tag);
+    if (!state.swiftActions.includes(actionName)) {
+        console.warn("[preview] no Swift action for tag", tag, "→", actionName);
+        return;
+    }
+    window.__megaman_preview.setAction(actionName);
+}
+
+function cssEscape(s) {
+    // Action / tag IDs are simple identifiers, but be safe for selectors.
+    return s.replace(/[^A-Za-z0-9_-]/g, c => "\\" + c);
+}
+
+function installControls() {
+    document.getElementById("btnPause").addEventListener("click", () => {
+        const info = window.__megaman_preview.getInfo();
+        const next = !(info && info.paused);
+        window.__megaman_preview.setPaused(next);
+    });
+    document.getElementById("btnRestart").addEventListener("click", () => {
+        if (state.activeAction) {
+            cancelChain();
+            const action = ACTIONS.find(a => a.id === activeIdFromDom());
+            if (action) selectAction(action);
+        } else {
+            window.__megaman_preview.restart();
+        }
+    });
+    let facing = "right";
+    document.getElementById("btnFlip").addEventListener("click", () => {
+        facing = facing === "right" ? "left" : "right";
+        window.__megaman_preview.setFacing(facing);
+    });
+}
+
+function activeIdFromDom() {
+    const el = actionListEl.querySelector("button.active");
+    return el ? el.dataset.action : null;
+}
+
+function startInfoPump() {
+    function pumpInfo() {
+        const info = window.__megaman_preview.getInfo();
+        if (info) {
+            const chainLabel = state.activeAction
+                ? `${state.activeAction.id} (step ${state.activeStepIdx + 1}/${state.activeAction.steps.length})`
+                : "(none)";
+            iAction.textContent = chainLabel;
+            iSwiftAction.textContent = info.action;
+            iTag.textContent    = info.tag || "(none)";
+            iFacing.textContent = info.facing;
+            iPaused.textContent = info.paused ? "yes" : "no";
+            iAtlasFrame.textContent = info.atlasFrame == null ? "—" : String(info.atlasFrame);
+            iFrame.textContent  = info.frameCount.toFixed(0);
+            iStepMs.textContent = state.activeAction
+                ? Math.round(performance.now() - state.stepStartedAt)
+                : "—";
+        }
+        requestAnimationFrame(pumpInfo);
+    }
+    requestAnimationFrame(pumpInfo);
+}
+
+main();
+</script>
+</body>
+</html>

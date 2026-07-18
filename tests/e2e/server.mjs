@@ -30,7 +30,10 @@ const MIME = {
     ".svg": "image/svg+xml",
     ".css": "text/css; charset=utf-8",
     ".ico": "image/x-icon",
-    ".map": "application/json; charset=utf-8"
+    ".map": "application/json; charset=utf-8",
+    ".wav": "audio/wav",
+    ".ogg": "audio/ogg",
+    ".mp3": "audio/mpeg"
 };
 
 // Resolve a URL path to a physical file path, guarding against escape via "..".

@@ -178,3 +178,36 @@ final class GroundCombo: Attack {
         }
     }
 }
+
+// MARK: - AttackPreviewable
+extension GroundCombo: AttackPreviewable {
+    static let previewStageNames: [String] = [
+        "prepare1",
+        "slash1",
+        "hold1",
+        "prepare2",
+        "slash2",
+        "hold2",
+        "branch",
+        "prepare3",
+        "slash3",
+        "hold3",
+        "done",
+    ]
+
+    var previewStageIndex: Int {
+        switch stage {
+        case .prepare1: return 0
+        case .slash1:   return 1
+        case .hold1:    return 2
+        case .prepare2: return 3
+        case .slash2:   return 4
+        case .hold2:    return 5
+        case .branch:   return 6
+        case .prepare3: return 7
+        case .slash3:   return 8
+        case .hold3:    return 9
+        case .done:     return 10
+        }
+    }
+}

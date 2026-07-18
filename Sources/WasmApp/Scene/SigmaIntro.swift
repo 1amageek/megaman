@@ -6,6 +6,13 @@ import OpenSpriteKit
 // Mega-Man-X8-16-bit/src/Actors/Bosses/SatanSigma/Intro.gd 1:1 — stage
 // numbering matches Godot's `attack_stage` exactly. Per-stage animation
 // durations come from satan_sigma.json frame sums (see comments).
+//
+// Lives in the Scene layer (not Systems) because every stage transition
+// calls back into BossBattleScene-specific operations (sigma-wall reveal,
+// throne explosion, music cue, HP bar appearance). Per ARCHITECTURE.md
+// §3.1 this would be a Systems→Scene direction violation; co-locating it
+// with the scene avoids that without an artificial protocol seam, since
+// the intro is single-purpose and not reused outside this battle.
 
 @MainActor
 final class SigmaIntro {

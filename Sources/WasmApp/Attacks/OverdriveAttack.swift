@@ -113,6 +113,7 @@ final class OverdriveAttack: Attack {
                 let beam = ProjectileFactory.sigmaLaser(from: muzzle, facing: context.boss.facing)
                 laser = beam
                 context.spawnProjectile(beam)
+                AudioManager.shared.playSFX(AudioAssets.sigmaLaser)
                 // Godot OverdriveAttack.gd:40 fires `sigma_desperation` with the
                 // facing direction at this exact frame — SigmaWall listens and
                 // the wall on Sigma's facing side explodes as the laser commits.

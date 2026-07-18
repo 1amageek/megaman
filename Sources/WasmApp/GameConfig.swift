@@ -24,15 +24,18 @@ enum PhysicsConstants {
     static let playerJumpFullspeedProportion: CGFloat = 0.19 // Jump.gd fullspeed_proportion
     static let playerMaxHealth: CGFloat = 16      // Player.tscn max_health = 16.0
     static let damageFlashDuration: TimeInterval = 0.034
-    // Damage.gd on Player.tscn: invulnerability_time = 1.75, duration_time = 0.6.
-    // Knockback values inherit from Modules/Movement.gd defaults:
-    //   horizontal_velocity = 90, jump_velocity = 320 (Damage.gd reads these
-    //   via the shared Movement module, not Player-specific overrides).
+    // Damage node on Player.tscn explicitly overrides Movement.gd defaults:
+    //   horizontal_velocity = 45.0  (NOT the 90 default)
+    //   jump_velocity      = 190.0  (NOT the 320 default)
+    //   invulnerability_time = 1.75
+    //   duration_time      = 0.6
+    // Damage.gd reads horizontal_velocity / jump_velocity off ITS OWN node,
+    // not the Movement module — so the override is what runs in-game.
     static let invulnerabilityDuration: TimeInterval = 1.75
     static let bossNormalInvulnerabilityDuration: TimeInterval = 0.06
     static let hurtDuration: TimeInterval = 0.6
-    static let hurtKnockbackX: CGFloat = 90
-    static let hurtKnockbackY: CGFloat = 320
+    static let hurtKnockbackX: CGFloat = 45
+    static let hurtKnockbackY: CGFloat = 190
 }
 
 // MARK: - Wall mechanics

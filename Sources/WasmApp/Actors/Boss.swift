@@ -111,7 +111,11 @@ final class Boss: Actor {
         // Godot BossDamage.tscn applies no knockback — Sigma flinches via
         // invulnerability frames only, holding position so attack timing is
         // not derailed by player shots. Match by NOT mutating velocity here.
-        return super.takeDamage(amount, inflicterX: inflicterX)
+        let applied = super.takeDamage(amount, inflicterX: inflicterX)
+        if applied {
+            AudioManager.shared.playSFX(AudioAssets.hitBoss)
+        }
+        return applied
     }
 
     func tick(_ dt: TimeInterval, stageWidth: CGFloat, floorY: CGFloat) {
