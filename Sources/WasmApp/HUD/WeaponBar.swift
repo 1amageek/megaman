@@ -6,16 +6,15 @@ import OpenSpriteKit
 // v1 carries only X-Buster, so the icon is a static "X" plate; the three
 // segment gauge to the right reflects Player.chargeLevel (0/1/2).
 
-@MainActor
 final class WeaponBar: SKNode {
     private let iconBg: SKSpriteNode
     private let iconBorder: SKSpriteNode
     private let iconLabel: SKLabelNode
     private let segments: [SKSpriteNode]
     private var lastChargeLevel: Int = -1
-    private nonisolated(unsafe) static let segmentLitColor =
+    private static let segmentLitColor =
         SKColor(red: 0.4, green: 0.95, blue: 1.0, alpha: 1.0)
-    private nonisolated(unsafe) static let segmentDimColor =
+    private static let segmentDimColor =
         SKColor(white: 0.18, alpha: 1.0)
 
     override init() {

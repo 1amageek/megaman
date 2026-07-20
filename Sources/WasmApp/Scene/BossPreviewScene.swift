@@ -56,9 +56,11 @@ final class BossPreviewScene: SKScene {
 
     // MARK: - Lifecycle
 
-    override func didMove(to view: SKView) {
+    nonisolated override func didMove(to view: SKView) {
         super.didMove(to: view)
-        MainActor.assumeIsolated { buildScene() }
+        withMainActorCallbackOwner(self) { scene in
+            scene.buildScene()
+        }
     }
 
     private func buildScene() {
@@ -173,27 +175,28 @@ final class BossPreviewScene: SKScene {
 
     // MARK: - Tick
 
-    override func update(_ currentTime: TimeInterval) {
-        MainActor.assumeIsolated {
-            let dt: TimeInterval
-            if let last = lastUpdateTime {
-                dt = min(1.0 / 30.0, currentTime - last)
-            } else {
-                dt = 1.0 / 60.0
-            }
-            lastUpdateTime = currentTime
-            if isPaused { return }
-
-            // Boss runs the same battle-scene tick (gravity / clamp / animation
-            // / activeAttack.tick). Player runs preview-mode, so it just plays
-            // the idle pose with no physics integration of its own.
-            boss.tick(dt, stageWidth: stage.width, floorY: stage.floorY)
-            player.tick(dt,
-                        input: InputManager.shared,
-                        stageWidth: stage.width,
-                        floorY: stage.floorY)
-            tickProjectiles(dt)
+    nonisolated override func update(_ currentTime: TimeInterval) {
+        withMainActorCallbackOwner(self) { scene in
+            scene.updateOnMainActor(currentTime)
         }
+    }
+
+    private func updateOnMainActor(_ currentTime: TimeInterval) {
+        let dt: TimeInterval
+        if let last = lastUpdateTime {
+            dt = min(1.0 / 30.0, currentTime - last)
+        } else {
+            dt = 1.0 / 60.0
+        }
+        lastUpdateTime = currentTime
+        if isPaused { return }
+
+        boss.tick(dt, stageWidth: stage.width, floorY: stage.floorY)
+        player.tick(dt,
+                    input: InputManager.shared,
+                    stageWidth: stage.width,
+                    floorY: stage.floorY)
+        tickProjectiles(dt)
     }
 
     // MARK: - Projectile lifecycle (mirrors BossBattleScene.spawnProjectile/tickProjectiles)

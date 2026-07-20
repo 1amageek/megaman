@@ -47,9 +47,11 @@ final class PlayerPreviewScene: SKScene {
         player.attachChargeAtlas(atlas, for: level)
     }
 
-    override func didMove(to view: SKView) {
+    nonisolated override func didMove(to view: SKView) {
         super.didMove(to: view)
-        MainActor.assumeIsolated { buildScene() }
+        withMainActorCallbackOwner(self) { scene in
+            scene.buildScene()
+        }
     }
 
     private func buildScene() {
@@ -116,26 +118,24 @@ final class PlayerPreviewScene: SKScene {
         wallNode.isHidden = false
     }
 
-    override func update(_ currentTime: TimeInterval) {
-        // WASM is single-threaded — rAF always lands on main. Same pattern as
-        // BossBattleScene.update(_:) so the @MainActor-isolated state is
-        // accessible from the inherited (nonisolated) override.
-        MainActor.assumeIsolated {
-            let dt: TimeInterval
-            if let last = lastUpdateTime {
-                dt = min(1.0 / 30.0, currentTime - last)
-            } else {
-                dt = 1.0 / 60.0
-            }
-            lastUpdateTime = currentTime
-            if isPaused { return }
-            // The preview-mode Player ignores `input` / `stageWidth` /
-            // `floorY` — it only needs `dt`. Pass dummy values so the call
-            // site stays signature-compatible with the boss-arena tick.
-            player.tick(dt, input: InputManager.shared,
-                        stageWidth: CGFloat(GameConfig.gameWidth),
-                        floorY: GameConfig.floorY)
+    nonisolated override func update(_ currentTime: TimeInterval) {
+        withMainActorCallbackOwner(self) { scene in
+            scene.updateOnMainActor(currentTime)
         }
+    }
+
+    private func updateOnMainActor(_ currentTime: TimeInterval) {
+        let dt: TimeInterval
+        if let last = lastUpdateTime {
+            dt = min(1.0 / 30.0, currentTime - last)
+        } else {
+            dt = 1.0 / 60.0
+        }
+        lastUpdateTime = currentTime
+        if isPaused { return }
+        player.tick(dt, input: InputManager.shared,
+                    stageWidth: CGFloat(GameConfig.gameWidth),
+                    floorY: GameConfig.floorY)
     }
 
     func resetTimeline() {

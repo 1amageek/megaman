@@ -141,10 +141,10 @@ final class BossBattleScene: SKScene, PlayerWorld {
         fatalError("init(coder:) has not been implemented")
     }
 
-    override func didMove(to view: SKView) {
+    nonisolated override func didMove(to view: SKView) {
         super.didMove(to: view)
-        MainActor.assumeIsolated {
-            buildScene()
+        withMainActorCallbackOwner(self) { scene in
+            scene.buildScene()
         }
     }
 
@@ -225,9 +225,13 @@ final class BossBattleScene: SKScene, PlayerWorld {
 
     // MARK: - Tick
 
-    override func update(_ currentTime: TimeInterval) {
-        // WASM is single-threaded; requestAnimationFrame always fires on the main thread.
-        MainActor.assumeIsolated {
+    nonisolated override func update(_ currentTime: TimeInterval) {
+        withMainActorCallbackOwner(self) { scene in
+            scene.updateOnMainActor(currentTime)
+        }
+    }
+
+    private func updateOnMainActor(_ currentTime: TimeInterval) {
             let dt: TimeInterval
             if let last = lastUpdateTime {
                 dt = min(1.0 / 30.0, currentTime - last)
@@ -316,7 +320,6 @@ final class BossBattleScene: SKScene, PlayerWorld {
             }
 
             logDiagnosticsIfNeeded(at: currentTime)
-        }
     }
 
     func resetTimeline() {
